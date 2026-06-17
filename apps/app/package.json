@@ -1,0 +1,9 @@
+{
+  "name": "qween-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Zero-dependency Node.js renderer server for QweenRender.html",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

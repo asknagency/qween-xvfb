@@ -1,0 +1,13 @@
+{
+  "name": "qween-xvfb",
+  "private": true,
+  "packageManager": "pnpm@9.1.0",
+  "scripts": {
+    "dev": "concurrently \"pnpm run dev:api\" \"pnpm run dev:app\"",
+    "dev:api": "cd apps/api && uvicorn main:app --reload --port 8000",
+    "dev:app": "cd apps/app && node server.js"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

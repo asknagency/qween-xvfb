@@ -1,11 +1,35 @@
-__pycache__/
-*.pyc
-*.pyo
-.env
-venv/
-.venv/
+# Node
 node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Generated / temp
 apps/api/assets/
-apps/app/public/projects/
+apps/app/public/projects/*.zip
+*.mp4
+*.mov
+*.webm
 /tmp/
 *.log
+
+# OS
+.DS_Store
+Thumbbs.db
+
+# Env
+.env
+.env.local
+.env.production
+
+# pnpm
+.pnpm-store/

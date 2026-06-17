@@ -1,0 +1,47 @@
+{
+  "$schema": "https://schemas.codesandbox.io/configuration/tasks.json",
+  "setupTasks": [
+    {
+      "name": "Install system deps (Xvfb, Chromium, FFmpeg)",
+      "command": "sudo apt-get update -qq && sudo apt-get install -y xvfb chromium chromium-driver ffmpeg x11-utils xdotool fonts-liberation fonts-dejavu-core libglib2.0-0 libnss3 libnspr4 libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 libpango-1.0-0 libpangocairo-1.0-0 libcairo2"
+    },
+    {
+      "name": "Install pnpm",
+      "command": "npm install -g pnpm@9.1.0"
+    },
+    {
+      "name": "Install Node deps (app)",
+      "command": "pnpm install"
+    },
+    {
+      "name": "Install Python deps",
+      "command": "cd apps/api && pip install -r requirements.txt"
+    },
+    {
+      "name": "Create .env",
+      "command": "[ -f .env ] || cp .env.example .env"
+    }
+  ],
+  "tasks": {
+    "dev:app": {
+      "name": "▶ Renderer (Node :3001)",
+      "command": "cd apps/app && PORT=3001 node server.js",
+      "runAtStart": true,
+      "preview": {
+        "port": 3001
+      }
+    },
+    "dev:api": {
+      "name": "▶ API (FastAPI :8000)",
+      "command": "cd apps/api && uvicorn main:app --reload --port 8000 --host 0.0.0.0",
+      "runAtStart": true,
+      "preview": {
+        "port": 8000
+      }
+    },
+    "health": {
+      "name": "✓ Health check",
+      "command": "curl -s http://localhost:8000/health | python3 -m json.tool"
+    }
+  }
+}

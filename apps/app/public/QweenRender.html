@@ -1,0 +1,1484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QweenRender</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/DrawSVGPlugin.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/MotionPathPlugin.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/MorphSVGPlugin.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/TextPlugin.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/ScrambleTextPlugin.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/Physics2DPlugin.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/EasePack.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: #000;
+    overflow: hidden;
+  }
+
+  /* ── Stage ─────────────────────────────────────────────── */
+  #stage {
+    width: 100vw; height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    position: relative; overflow: hidden;
+  }
+
+  /* The aspect-ratio frame that holds all nodes */
+  #frame {
+    position: relative;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+
+  /* Each node layer */
+  .qw-node {
+    position: absolute; inset: 0;
+    overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  .qw-node svg {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    shape-rendering: geometricPrecision;
+    text-rendering: geometricPrecision;
+  }
+
+  .qw-node video {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: contain;
+    background: transparent;
+  }
+
+  /* ── Status overlay ─────────────────────────────────────── */
+  #status {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    background: #000;
+    color: #fff;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 14px;
+    z-index: 9999;
+    gap: 16px;
+    transition: opacity 0.4s ease;
+  }
+  #status.hidden { opacity: 0; pointer-events: none; }
+
+  #status-icon {
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    background: rgba(64,158,255,.15);
+    border: 1px solid rgba(64,158,255,.3);
+    display: flex; align-items: center; justify-content: center;
+    color: #409EFF;
+  }
+
+  #status-text { color: #888; font-size: 13px; max-width: 340px; text-align: center; line-height: 1.5; }
+  #status-error { color: #f56c6c; font-size: 13px; max-width: 380px; text-align: center; line-height: 1.5; background: rgba(245,108,108,.08); border: 1px solid rgba(245,108,108,.25); border-radius: 6px; padding: 10px 14px; display: none; }
+
+  /* spinner */
+  @keyframes qw-spin { to { transform: rotate(360deg); } }
+  .qw-spinner {
+    width: 24px; height: 24px;
+    border: 2px solid rgba(64,158,255,.2);
+    border-top-color: #409EFF;
+    border-radius: 50%;
+    animation: qw-spin .7s linear infinite;
+  }
+</style>
+</head>
+<body>
+
+<!-- ── Status / loading overlay ─────────────────────────── -->
+<div id="status">
+  <div id="status-icon">
+    <div class="qw-spinner"></div>
+  </div>
+  <div id="status-text">Loading project…</div>
+  <div id="status-error"></div>
+</div>
+
+<!-- ── Main render stage ─────────────────────────────────── -->
+<div id="stage">
+  <div id="frame"></div>
+</div>
+
+<script>
+'use strict';
+
+// ─────────────────────────────────────────────────────────────
+// GSAP setup — identical to QweenApp
+// ─────────────────────────────────────────────────────────────
+gsap.registerPlugin(DrawSVGPlugin, MotionPathPlugin, MorphSVGPlugin, TextPlugin, ScrambleTextPlugin, Physics2DPlugin, EasePack);
+gsap.ticker.fps(60);
+gsap.ticker.lagSmoothing(0);
+gsap.config({ autoSleep: 60, force3D: true });
+gsap.defaults({ duration: 2, ease: 'power2.inOut' });
+
+// ─────────────────────────────────────────────────────────────
+// Expression sandbox — verbatim from QweenApp
+// ─────────────────────────────────────────────────────────────
+const EXPR_ALLOWED_GLOBALS = new Set([
+  'Math','i','t','ts','vw','vh','data',
+  '$val','$max','$min','$n',
+  'str','row','max','min',
+  'parseInt','parseFloat','isNaN','isFinite',
+  'Number','String','Boolean',
+  'Infinity','NaN','undefined','null','true','false',
+  'sortBy','rankOf','pluck',
+]);
+const EXPR_BANNED_PATTERNS = [
+  /\bnew\b/,/\bthis\b/,/\b__proto__\b/,/\bprototype\b/,/\bconstructor\b/,
+  /=>/,/\bfunction\b/,/\bclass\b/,/\bimport\b/,/\brequire\b/,/\beval\b/,
+  /\bawait\b/,/\byield\b/,/\bdebugger\b/,/\bdelete\b/,/\bvoid\b/,/\binstanceof\b/,
+  /`/,/\[['"`][\s\S]*?['"`]\]/,
+];
+const EXPR_BANNED_PROPERTY_NAMES = new Set([
+  'constructor','prototype','__proto__','__defineGetter__','__defineSetter__',
+  '__lookupGetter__','__lookupSetter__','apply','bind','call',
+  'getPrototypeOf','setPrototypeOf','defineProperty','getOwnPropertyDescriptor',
+]);
+const isSafeExpression = (str) => {
+  if (!str || typeof str !== 'string' || str.trim() === '') return false;
+  if (str.length > 200) return false;
+  if (EXPR_BANNED_PATTERNS.some(rx => rx.test(str))) return false;
+  const stripped = str.replace(/'[^'\\]*(?:\\.[^'\\]*)*'|"[^"\\]*(?:\\.[^"\\]*)*"/g,'""');
+  const identRe = /[a-zA-Z_$][a-zA-Z0-9_$]*/g; let m;
+  while ((m = identRe.exec(stripped)) !== null) {
+    const tok = m[0];
+    const isProp = m.index > 0 && stripped[m.index-1] === '.';
+    const isSci = m.index > 0 && /\d/.test(stripped[m.index-1]) && /^[eE]\d+$/.test(tok);
+    if (isSci) continue;
+    if (isProp) { if (EXPR_BANNED_PROPERTY_NAMES.has(tok)) return false; continue; }
+    if (!EXPR_ALLOWED_GLOBALS.has(tok)) return false;
+  }
+  return true;
+};
+const _exprFnCache = new Map();
+const evalSandboxed = (expr, vars) => {
+  let fn = _exprFnCache.get(expr);
+  if (!fn) { fn = new Function('__sb__', `with (__sb__) { return (${expr}); }`); _exprFnCache.set(expr, fn); }
+  const sandbox = Object.freeze(Object.assign(Object.create(null), vars));
+  const proxy = new Proxy(sandbox, {
+    has() { return true; },
+    get(target, key) {
+      if (key === Symbol.unscopables) return undefined;
+      if (typeof key === 'string' && EXPR_BANNED_PROPERTY_NAMES.has(key)) return undefined;
+      if (Object.prototype.hasOwnProperty.call(target, key)) return target[key];
+      return undefined;
+    },
+    set() { return false; },
+  });
+  return fn(proxy);
+};
+
+// ─────────────────────────────────────────────────────────────
+// Helpers — verbatim from QweenApp
+// ─────────────────────────────────────────────────────────────
+const sortBy  = (arr, key) => !Array.isArray(arr) ? [] : arr.slice().sort((a,b) => { const av = key!==undefined?parseFloat(a[key]):parseFloat(a); const bv = key!==undefined?parseFloat(b[key]):parseFloat(b); return (isNaN(bv)?0:bv)-(isNaN(av)?0:av); });
+const rankOf  = (arr, val, key) => { if (!Array.isArray(arr)) return 0; const n=parseFloat(val); if(isNaN(n)) return 0; return arr.filter(x => { const v=parseFloat(key!==undefined?x[key]:x); return !isNaN(v)&&v>n; }).length; };
+const pluck   = (arr, key) => !Array.isArray(arr) ? [] : arr.map(x => key!==undefined?x[key]:x);
+const formatTime = (s, fmt) => { const sv=Math.floor(s); const h=Math.floor(sv/3600); const m=Math.floor((sv%3600)/60); const sec=sv%60; const p=n=>n<10?'0'+n:n; return fmt==='hh:mm:ss'?`${p(h)}:${p(m)}:${p(sec)}`:`${p(m)}:${p(sec)}`; };
+const formatNumber = (v, mode) => {
+  if (mode==='currency') { if(v>=1e6) return (v/1e6).toFixed(1)+'M'; if(v>=1e3) return (v/1e3).toFixed(1)+'k'; }
+  else if (mode==='filesize') { if(v>=1073741824) return (v/1073741824).toFixed(2)+' GB'; if(v>=1048576) return (v/1048576).toFixed(1)+' MB'; if(v>=1024) return (v/1024).toFixed(0)+' KB'; }
+  return v;
+};
+
+// ─────────────────────────────────────────────────────────────
+// Proxy helper for expression evaluation
+// ─────────────────────────────────────────────────────────────
+const AnimationProxy = {
+  createProxy(el) {
+    let bbox = { x:0, y:0, width:0, height:0 };
+    try { bbox = el.getBBox ? el.getBBox() : bbox; } catch(e){}
+    return { x:bbox.x, y:bbox.y, w:bbox.width, h:bbox.height, cx:bbox.x+bbox.width/2, cy:bbox.y+bbox.height/2 };
+  }
+};
+
+// ─────────────────────────────────────────────────────────────
+// AnimationEngine — extracted from QweenApp, self-contained
+// ─────────────────────────────────────────────────────────────
+// AnimationEngine — extracted from QweenApp v222, self-contained
+// ─────────────────────────────────────────────────────────────
+
+// getEffectiveTimeScale — used by the video play tween inside buildTimeline
+const getEffectiveTimeScale = (tl) => {
+  let rate = 1, node = tl;
+  while (node) { rate *= node.timeScale(); node = node.parent; }
+  return Math.min(16, Math.max(0.0625, rate || 1));
+};
+
+// ElMessage stub — QweenRender has no UI toasts; route to console instead
+const ElMessage = {
+  warning: (msg) => console.warn('[QweenRender]', msg),
+  error:   (msg) => console.error('[QweenRender]', msg),
+  success: (msg) => console.log('[QweenRender]', msg),
+};
+
+const AnimationEngine = {
+createProxy: (el) => {
+let b = { x: 0, y: 0, width: 0, height: 0 }; try { b = el.getBBox(); } catch (e) { }
+return { x: b.x, y: b.y, w: b.width, h: b.height, cx: b.x + b.width / 2, cy: b.y + b.height / 2, dom: el };
+},
+generateGsapVars: (currentTween, activeProps, expressionFlags, plugins, activeAttrs, attrValues, useGSAPColors, localFonts) => {
+const vars = {}; const simpleProps = ['transformOrigin', 'svgOrigin', 'transformPerspective']; const transProps = ['x', 'y', 'z', 'scale', 'scaleX', 'scaleY', 'rotation', 'rotationX', 'rotationY', 'skewX', 'skewY', 'opacity', 'autoAlpha', 'fill', 'stroke', 'strokeWidth', 'strokeDasharray', 'strokeDashoffset'];
+const _blockedExprs = [];
+simpleProps.forEach(k => { if (activeProps[k] && currentTween.vars[k] !== null) vars[k] = currentTween.vars[k]; });
+if (activeProps.backfaceVisibility) vars.backfaceVisibility = 'hidden';
+transProps.forEach(k => {
+if (activeProps[k] && currentTween.vars[k] !== null) {
+if (expressionFlags[k]) { const expr = currentTween.vars[k]; if (isSafeExpression(expr)) vars[k] = { _isExpr: true, val: expr }; else { vars[k] = 0; _blockedExprs.push(k); } }
+else { vars[k] = currentTween.vars[k]; }
+}
+});
+const textProps = ['fontSize', 'letterSpacing', 'lineHeight', 'wordSpacing'];
+textProps.forEach(k => {
+if (activeProps[k] && currentTween.vars[k] !== null && currentTween.vars[k] !== "") {
+if (expressionFlags[k]) { const expr = currentTween.vars[k]; if (isSafeExpression(expr)) vars[k] = { _isExpr: true, val: expr }; else { vars[k] = 0; _blockedExprs.push(k); } }
+else { vars[k] = currentTween.vars[k]; }
+}
+});
+
+const htmlColorProps = ['color', 'backgroundColor'];
+htmlColorProps.forEach(k => {
+if (activeProps[k] && currentTween.vars[k] !== null) {
+  if (expressionFlags[k]) { const expr = currentTween.vars[k]; if (isSafeExpression(expr)) vars[k] = { _isExpr: true, val: expr }; else { vars[k] = 'transparent'; _blockedExprs.push(k); } }
+  else { vars[k] = currentTween.vars[k]; }
+}
+});
+const htmlStringProps = ['fontWeight', 'textAlign', 'textDecoration'];
+htmlStringProps.forEach(k => { if (activeProps[k] && currentTween.vars[k] !== null && currentTween.vars[k] !== '') vars[k] = currentTween.vars[k]; });
+const htmlPosProps = ['top', 'left', 'right', 'bottom'];
+htmlPosProps.forEach(k => { if (activeProps[k] && currentTween.vars[k] !== null && currentTween.vars[k] !== '') vars[k] = currentTween.vars[k]; });
+if (plugins.typography && plugins.typography.fontFamily) {
+vars.fontFamily = plugins.typography.fontFamily;
+if (activeProps.fontVariationSettings) {
+const matchedFont = localFonts.find(f => f.family === plugins.typography.fontFamily);
+if (matchedFont && matchedFont.axes && matchedFont.axes.length > 0) {
+vars._fvs = { target: {}, defaults: {} };
+matchedFont.axes.forEach(a => { vars._fvs.target[a.tag] = plugins.typography.axes[a.tag]; vars._fvs.defaults[a.tag] = a.default || 400; });
+}
+}
+}
+const attrObj = {};
+Object.keys(activeAttrs).forEach(key => {
+if (activeAttrs[key] && attrValues[key] !== undefined) {
+if (expressionFlags['attr_' + key]) { const expr = attrValues[key]; if (isSafeExpression(expr)) attrObj[key] = { _isExpr: true, val: expr }; else { attrObj[key] = 0; _blockedExprs.push('attr:' + key); } }
+else { attrObj[key] = attrValues[key]; }
+}
+});
+if (Object.keys(attrObj).length > 0) vars.attr = attrObj;
+if (plugins.motionPathEnabled && plugins.motionPath.path) {
+let alignVal = undefined; if (plugins.motionPath.alignMode === 'path') alignVal = plugins.motionPath.path; else if (plugins.motionPath.alignMode === 'self') alignVal = "self";
+const autoRotateVal = plugins.motionPath.autoRotate
+  ? (plugins.motionPath.autoRotateOffset !== 0 ? plugins.motionPath.autoRotateOffset : true)
+  : false;
+vars.motionPath = { path: plugins.motionPath.path, align: alignVal, autoRotate: autoRotateVal, start: plugins.motionPath.start, end: plugins.motionPath.end, alignOrigin: [plugins.motionPath.alignOrigin.x, plugins.motionPath.alignOrigin.y], offsetX: plugins.motionPath.offsetX, offsetY: plugins.motionPath.offsetY };
+if (plugins.motionPath.cameraFollow) vars._cameraConfig = { follow: true, zoom: plugins.motionPath.cameraZoom, damping: plugins.motionPath.cameraDamping || 0 };
+}
+if (plugins.morphEnabled && plugins.morph.shape) {
+  const shapeIdx = plugins.morph.shapeIndex !== undefined && plugins.morph.shapeIndex !== '' && plugins.morph.shapeIndex !== 'auto'
+    ? parseInt(plugins.morph.shapeIndex, 10)
+    : 'auto';
+  vars.morphSVG = { shape: plugins.morph.shape, type: plugins.morph.type, origin: plugins.morph.origin, precision: plugins.morph.precision, shapeIndex: shapeIdx };
+}
+if (plugins.drawEnabled) {
+  const drawVal = plugins.drawSVG.start && plugins.drawSVG.start !== "0%"
+    ? `${plugins.drawSVG.start} ${plugins.drawSVG.end}`
+    : (plugins.drawSVG.end || "100%");
+  vars.drawSVG = plugins.drawSVG.initiallyHidden ? { value: drawVal, initiallyHidden: true } : drawVal;
+}
+if (plugins.snapEnabled) vars._snap = { prop: plugins.snap.prop, value: plugins.snap.value };
+if (plugins.textEffect.mode === 'text') {
+const textVal = plugins.textEffect.text.value || '';
+const delim = plugins.textEffect.text.delimiter;
+if (plugins.textEffect.exprEnabled && isSafeExpression(textVal)) {
+vars._textExpr = { _isExpr: true, val: textVal, delimiter: delim };
+} else if (textVal.includes('{original}') || textVal.includes('{text}')) {
+
+vars._textOriginal = { template: textVal, delimiter: delim };
+} else {
+vars.text = { value: textVal, delimiter: delim };
+}
+}
+else if (plugins.textEffect.mode === 'scramble') {
+const scramVal = plugins.textEffect.scramble.text || '';
+vars.scrambleText = { ...plugins.textEffect.scramble };
+if (plugins.textEffect.exprEnabled && isSafeExpression(scramVal)) {
+vars.scrambleText._isExpr = true; vars.scrambleText._exprVal = scramVal;
+} else if (scramVal.includes('{original}') || scramVal.includes('{text}')) {
+
+vars.scrambleText._originalTemplate = scramVal;
+}
+
+}
+else if (plugins.textEffect.mode === 'counter') {
+const ctr = { ...plugins.textEffect.counter };
+if (plugins.textEffect.exprEnabled && isSafeExpression(ctr.exprValue)) {
+ctr._valueExpr = { _isExpr: true, val: ctr.exprValue };
+}
+vars._counter = ctr;
+}
+else if (plugins.textEffect.mode === 'timer') vars._timer = { ...plugins.textEffect.timer };
+if (plugins.physicsEnabled) {
+vars.physics2D = { velocity: plugins.physics.velocity, angle: plugins.physics.angle, gravity: plugins.physics.gravity, friction: plugins.physics.friction };
+}
+if (_blockedExprs.length > 0) vars._blockedExprs = _blockedExprs;
+return vars;
+},
+buildTimeline: (tweens, timelineLoop, timelineYoyo, rootSvgId, callbacks, originalViewBox, timelineReverse, globalDataSources, swapTemplates, storedInitialStates) => {
+const masterTl = gsap.timeline({
+  repeat: timelineLoop ? -1 : 0,
+  yoyo: timelineLoop && timelineYoyo ? true : false,
+  smoothChildTiming: true,
+  autoRemoveChildren: false,
+  onComplete: callbacks.onComplete,
+  onReverseComplete: callbacks.onReverseComplete || callbacks.onComplete,
+  onStart: callbacks.onStart,
+  onRepeat: callbacks.onRepeat,
+});
+const rootSvg = document.getElementById(rootSvgId);
+const combineOnUpdate = (f1, f2) => function() { if(f1) f1.apply(this); if(f2) f2.apply(this); };
+let _videoPlayLabelCounter = 0;
+const _videoPlayEntries = [];
+
+const captureSnapState = (binding) => {
+  
+  let el = null;
+  if (binding.hostNodeId) {
+    const hostDiv = document.getElementById(binding.hostNodeId);
+    el = hostDiv ? hostDiv.querySelector(`[id="${CSS.escape(binding.nodeId)}"]`) : null;
+  }
+  if (!el) el = document.getElementById(binding.nodeId);
+  if (!el) return null;
+  const tv = binding.tweenVars;
+  const rawTv = tv && (typeof Vue !== 'undefined' && Vue.toRaw) ? Vue.toRaw(tv) : tv;
+  if (!rawTv) return null;
+  const varsObj = rawTv.toVars || rawTv.fromVars || {};
+  const prop = binding.property;
+  const snapVars = {};
+
+  const readLive = (p) => {
+    if (p === 'textContent') return el.textContent;
+    if (p && p.startsWith('attr:')) return el.getAttribute(p.slice(5));
+    const gs = gsap.getProperty(el, p);
+    if (gs !== '' && gs !== null && gs !== undefined) return gs;
+    return window.getComputedStyle(el).getPropertyValue(p) || '';
+  };
+
+  const SNAP_SKIP = new Set(['_cameraConfig','_fvs','_snap','_counter','scrambleText','_timer','_isExpr','_textExpr','text','_textOriginal']);
+  Object.keys(varsObj).forEach(k => {
+    if (SNAP_SKIP.has(k)) return;
+    if (k === 'attr' && typeof varsObj.attr === 'object') {
+      snapVars.attr = snapVars.attr || {};
+      Object.keys(varsObj.attr).forEach(a => { snapVars.attr[a] = el.getAttribute(a) ?? ''; });
+    } else {
+      snapVars[k] = readLive(k);
+    }
+  });
+
+  if (prop && prop !== 'textContent' && !prop.startsWith('attr:') && !(prop in snapVars)) {
+    snapVars[prop] = readLive(prop);
+  }
+  if (prop && prop.startsWith('attr:')) {
+    const a = prop.slice(5);
+    snapVars.attr = snapVars.attr || {};
+    if (!(a in snapVars.attr)) snapVars.attr[a] = el.getAttribute(a) ?? '';
+  }
+  if (prop === 'textContent') snapVars._textContentReset = el.textContent;
+  return { el, snapVars, prop };
+};
+
+const addSnapBackReset = (animTl, { el, snapVars, prop }) => {
+  const elId = '#' + el.id;
+  animTl.call(function() {
+
+    let tl = animTl;
+    let isReversing = false;
+    while (tl) {
+      if (typeof tl._ts === 'number' && tl._ts < 0) { isReversing = true; break; }
+      tl = tl.parent;
+    }
+    if (isReversing) return;
+
+    if (snapVars.attr && typeof snapVars.attr === 'object') {
+      Object.entries(snapVars.attr).forEach(([a, v]) => el.setAttribute(a, v ?? ''));
+    }
+    if (prop === 'textContent' && snapVars._textContentReset !== undefined) {
+      el.textContent = snapVars._textContentReset;
+    }
+    const resetVars = {};
+    Object.entries(snapVars).forEach(([k, v]) => {
+      if (k === 'attr' || k === '_textContentReset') return;
+      resetVars[k] = v;
+    });
+
+    if (Object.keys(resetVars).length) gsap.set(elId, resetVars);
+  }, [], 0);
+};
+
+const resolveBindingExpressions = (vars, el, entryIdx, entries, dataVarCtx) => {
+  let hasValExpr = false;
+  const resolveObj = (vObj) => {
+    Object.keys(vObj).forEach(k => {
+      if (!vObj[k] || typeof vObj[k] !== 'object' || !vObj[k]._isExpr) return;
+      const expr = vObj[k].val;
+      if (typeof expr === 'string' &&
+          (expr.includes('$val') || expr.includes('str') || expr.includes('row') ||
+           /\bmax\b/.test(expr) || /\bmin\b/.test(expr))) hasValExpr = true;
+      try {
+        
+        const svg = el.ownerSVGElement || el.closest('svg') || document.getElementById(rootSvgId);
+        let vw = 100, vh = 100;
+        if (svg && svg.viewBox && svg.viewBox.baseVal) {
+          vw = svg.viewBox.baseVal.width; vh = svg.viewBox.baseVal.height;
+        }
+        const tProxy = AnimationEngine.createProxy(el);
+        const dataLookup = {};
+        if (globalDataSources) globalDataSources.forEach(s => { dataLookup[s.name] = s.entries; });
+        vObj[k] = evalSandboxed(expr, { i: entryIdx, t: tProxy, ts: [tProxy], vw, vh, Math, data: dataLookup, sortBy, rankOf, pluck, ...dataVarCtx });
+      } catch (e) { vObj[k] = isNaN(parseFloat(dataVarCtx.$val)) ? 0 : parseFloat(dataVarCtx.$val); }
+    });
+  };
+  resolveObj(vars);
+  if (vars.attr && typeof vars.attr === 'object') resolveObj(vars.attr);
+  return hasValExpr;
+};
+
+const addTextEffectTween = (animTl, nodeId, vars, { val, rawVal, dur, ease, timing, tweenMethod, hasValExpr }, scopedEl) => {
+  
+  const gsapTarget = scopedEl || ('#' + nodeId);
+  const textMode = timing.textMode;
+  if (textMode === 'counter') {
+    const c = vars._counter || {};
+    const counterTarget = (hasValExpr && typeof vars.textContent === 'number') ? vars.textContent : (isNaN(parseFloat(val)) ? 0 : parseFloat(val));
+    const formatCounter = (n) => {
+      let num = parseFloat(n); if (isNaN(num)) num = 0;
+      let formatted = Number(num).toFixed(c.decimals || 0);
+      if (c.separatorChar) {
+        const pts = formatted.split(c.decimalChar || '.');
+        pts[0] = pts[0].replace(/\B(?=(\d{3})+(?!\d))/g, c.separatorChar);
+        formatted = pts.join(c.decimalChar || '.');
+      }
+      return (c.prefix || '') + formatted + (c.suffix || '');
+    };
+    delete vars._counter;
+    animTl.fromTo(gsapTarget,
+      { textContent: typeof c.fromValue === 'number' ? c.fromValue : 0 },
+      { ...vars, textContent: counterTarget, duration: dur || 1, ease, snap: { textContent: 1 }, modifiers: { textContent: formatCounter } },
+      0);
+  } else if (textMode === 'scramble') {
+    const s = (vars.scrambleText && typeof vars.scrambleText === 'object') ? vars.scrambleText : {};
+    const charTransform = s.charTransform || 'none';
+    delete vars.scrambleText;
+    const applyCharTransform = (str, mode) => {
+      if (mode === 'reverse') return str.split('').reverse().join('');
+      if (mode === 'invertCase') return str.split('').map(ch => ch === ch.toUpperCase() ? ch.toLowerCase() : ch.toUpperCase()).join('');
+      if (mode === 'upper') return str.toUpperCase();
+      if (mode === 'lower') return str.toLowerCase();
+      return str;
+    };
+    const rawText = (hasValExpr && vars.textContent !== undefined) ? String(vars.textContent) : String(val);
+    const scrambleText = applyCharTransform(rawText, charTransform);
+    const scrambleVars = { ...vars, duration: dur || 1, ease, scrambleText: { text: scrambleText, chars: s.chars || 'upperCase', speed: s.speed || 0.3, revealDelay: s.revealDelay || 0, tweenLength: s.tweenLength || false }, immediateRender: false };
+    if (tweenMethod === 'set') animTl.set(gsapTarget, scrambleVars, 0);
+    else if (tweenMethod === 'from') animTl.from(gsapTarget, scrambleVars, 0);
+    else animTl.to(gsapTarget, scrambleVars, 0);
+  } else {
+    delete vars._counter; delete vars.scrambleText; delete vars._timer;
+    const resolvedTextExpr = (vars._textExpr !== undefined && vars._textExpr !== null && typeof vars._textExpr !== 'object') ? vars._textExpr : undefined;
+    const textResult = (vars.textContent !== undefined && vars.textContent !== null)
+      ? String(vars.textContent)
+      : resolvedTextExpr !== undefined
+        ? String(resolvedTextExpr)
+        : String(val);
+    delete vars.textContent; delete vars._textExpr;
+    vars.text = { value: textResult };
+    const textVars = { ...vars, duration: dur, ease, immediateRender: false };
+    if (tweenMethod === 'set') animTl.set(gsapTarget, textVars, 0);
+    else if (tweenMethod === 'from') animTl.from(gsapTarget, textVars, 0);
+    else animTl.to(gsapTarget, textVars, 0);
+  }
+};
+
+const buildDataIterationTl = (t) => {
+
+const masterDataTl = gsap.timeline({ defaults: { ease: 'none', immediateRender: false } });
+let entries = [];
+if (t.dataSourceRef && globalDataSources) {
+const src = globalDataSources.find(s => s.name === t.dataSourceRef);
+if (src) entries = src.entries;
+}
+
+const keyStats = {};
+if (t.dataBindings) {
+t.dataBindings.forEach(({ key }) => {
+if (!key || keyStats[key]) return;
+const vals = entries.map(e => parseFloat(e[key])).filter(v => !isNaN(v));
+keyStats[key] = { max: vals.length ? Math.max(...vals) : 1, min: vals.length ? Math.min(...vals) : 0 };
+});
+}
+const evalFormula = (formula, v, key, i, binding) => {
+if (!formula || !formula.trim()) return v;
+try {
+const stats = keyStats[key] || { max: 1, min: 0 };
+
+const result = (new Function('v','str','$val','row','max','min','i','n', `return (${formula});`))(
+parseFloat(v), String(v), parseFloat(v), entries[i] || {}, stats.max, stats.min, i, entries.length
+);
+if (binding && binding._lastError) binding._lastError = null;
+return result;
+} catch (e) {
+if (binding) binding._lastError = e.message;
+return v;
+}
+};
+
+const _bindingInitialStates = new Map();
+if (t.dataBindings) {
+  t.dataBindings.forEach((binding, _bIdx) => {
+    if (binding.snapBack === false) return;
+    const state = captureSnapState(binding);
+    if (state) _bindingInitialStates.set(_bIdx, state);
+  });
+}
+
+const _dgStart = (typeof t.dgStartIndex === 'number' && t.dgStartIndex > 0)
+  ? Math.min(t.dgStartIndex, entries.length - 1) : 0;
+const _entriesToPlay = _dgStart > 0 ? entries.slice(_dgStart) : entries;
+
+const _dur = typeof t.bindingDuration === 'number' ? t.bindingDuration : 1.0;
+const _hold = typeof t.holdDuration === 'number' ? t.holdDuration : 0;
+const _slotSize = _dur + _hold;
+_entriesToPlay.forEach((entry, _loopIdx) => {
+const entryIdx = _dgStart + _loopIdx;
+const entryTl = gsap.timeline({ defaults: { ease: 'none' } });
+
+const animTl = gsap.timeline({ defaults: { immediateRender: false } });
+
+_bindingInitialStates.forEach((state) => {
+  if (!state.el) return;
+  addSnapBackReset(animTl, state);
+});
+if (t.dataBindings) {
+t.dataBindings.forEach((binding) => {
+const { nodeId, hostNodeId, property, key, formula, tweenVars } = binding;
+
+let el = null;
+if (hostNodeId) {
+  const hostDiv = document.getElementById(hostNodeId);
+  el = hostDiv ? hostDiv.querySelector(`[id="${CSS.escape(nodeId)}"]`) : null;
+}
+if (!el) el = document.getElementById(nodeId);
+if (!el || entry[key] === undefined) return;
+const rawVal = entry[key];
+const val = evalFormula(formula, rawVal, key, entryIdx, binding);
+if (tweenVars) {
+const rawTv = (typeof Vue !== 'undefined' && Vue.toRaw) ? Vue.toRaw(tweenVars) : tweenVars;
+const tweenMethod = rawTv.type || rawTv.timingVars?.method || 'to';
+const vars = structuredClone(tweenMethod === 'from' ? (rawTv.fromVars || {}) : (rawTv.toVars || {}));
+const timing = rawTv.timingVars || {};
+
+const dur = typeof t.bindingDuration === 'number' ? t.bindingDuration : (timing.duration || 0);
+const ease = timing.ease || 'none';
+
+delete vars._cameraConfig; delete vars._fvs; delete vars._snap;
+
+const numVal = parseFloat(val);
+const stats = keyStats[key] || { max: 1, min: 0 };
+const dataVarCtx = { $val: isNaN(numVal) ? val : numVal, $max: stats.max, $min: stats.min, $n: entries.length, str: String(rawVal), row: entry, max: stats.max, min: stats.min, i: entryIdx };
+
+const hasValExpr = resolveBindingExpressions(vars, el, entryIdx, entries, dataVarCtx);
+
+if (property === 'textContent') {
+addTextEffectTween(animTl, nodeId, vars, { val, rawVal, dur, ease, timing, tweenMethod, hasValExpr }, el);
+} else if (property.startsWith('attr:')) {
+const attrName = property.slice(5);
+delete vars.text; delete vars._counter; delete vars.scrambleText; delete vars._timer;
+
+const _swapTplId = tweenVars ? tweenVars._swapTemplateId : null;
+if (_swapTplId && (attrName === 'href' || attrName === 'xlink:href')) {
+  const tplData = swapTemplates && swapTemplates.find ? swapTemplates.find(s => s.id === _swapTplId) : null;
+  if (!tplData) { console.warn(`[QweenApp] Image Transition: template id "${_swapTplId}" not found — was it deleted? Falling back to plain attr tween.`); }
+  if (tplData) {
+    const targetUrl = String(hasValExpr && vars.attr && vars.attr[attrName] !== undefined ? vars.attr[attrName] : val);
+    const clone = JSON.parse(JSON.stringify(tplData.data));
+    const injectUrl = (obj) => { if (!obj || typeof obj !== 'object') return; for (const k of ['href', 'xlink:href']) { if (k in obj) obj[k] = targetUrl; } if (obj.attr) injectUrl(obj.attr); };
+    const retarget = (t) => { t.selectedElementIds = [nodeId]; t.targets = [nodeId]; if (t.toVars) injectUrl(t.toVars); if (t.fromVars) injectUrl(t.fromVars); if (t.snapBackVars) injectUrl(t.snapBackVars); t.id = _qid('tween'); };
+    if (clone.isGroup) {
+      (clone.children || []).forEach(child => retarget(child));
+      const swapTl = gsap.timeline({ onInterrupt: () => {   } });
+      clone.children.forEach(child => processTweenNode(child, swapTl));
+      animTl.add(swapTl, 0);
+    } else {
+      retarget(clone);
+      processTweenNode(clone, animTl);
+    }
+    return;
+  }
+}
+const attrAlreadySet = hasValExpr && vars.attr && vars.attr[attrName] !== undefined;
+const attrVal = attrAlreadySet ? vars.attr[attrName] : val;
+const attrVars = { ...vars, attr: { ...(vars.attr || {}), [attrName]: attrVal }, duration: dur, ease, repeat: timing.repeat || 0, repeatDelay: timing.repeatDelay || 0, yoyo: timing.yoyo || false, immediateRender: false };
+
+if (tweenMethod === 'set') animTl.set(el, attrVars, 0);
+else if (tweenMethod === 'from') animTl.from(el, { ...attrVars, immediateRender: false, lazy: false }, 0);
+else animTl.to(el, attrVars, 0);
+} else {
+delete vars.text; delete vars._counter; delete vars.scrambleText; delete vars._timer;
+
+const skipDataInject = hasValExpr;
+const propVars = skipDataInject
+  ? { ...vars, duration: dur, ease, repeat: timing.repeat || 0, repeatDelay: timing.repeatDelay || 0, yoyo: timing.yoyo || false }
+  : { ...vars, [property]: val, duration: dur, ease, repeat: timing.repeat || 0, repeatDelay: timing.repeatDelay || 0, yoyo: timing.yoyo || false };
+if (tweenMethod === 'set') animTl.set(el, propVars, 0);
+else if (tweenMethod === 'from') animTl.from(el, { ...propVars, immediateRender: false, lazy: false }, 0);
+else animTl.to(el, { ...propVars, immediateRender: false }, 0);
+}
+} else {
+
+if (property === 'textContent') animTl.call(() => { el.textContent = String(val); }, [], 0);
+else if (property.startsWith('attr:')) animTl.set(el, { attr: { [property.slice(5)]: val } }, 0);
+else animTl.set(el, { [property]: val }, 0);
+}
+});
+}
+entryTl.add(animTl, 0);
+
+const animTlEmpty = animTl.duration() === 0;
+if (animTlEmpty) {
+
+  entryTl.to({}, { duration: _slotSize }, 0);
+} else if (_hold > 0) {
+
+  entryTl.to({}, { duration: _hold }, '>');
+}
+
+masterDataTl.add(entryTl, entryIdx * _slotSize);
+});
+return masterDataTl;
+};
+const processTweenNode = (t, currentTl) => {
+
+const hasDataEntries = t.isDataGroup &&
+(t.dataSourceRef && globalDataSources && globalDataSources.find(s => s.name === t.dataSourceRef)) &&
+(t.dataBindings && t.dataBindings.length);
+if (hasDataEntries) {
+currentTl.add(buildDataIterationTl(t), t.position || '>');
+return;
+}
+if (t.isGroup) {
+const groupTl = gsap.timeline({ repeat: t.repeat || 0, yoyo: t.yoyo || false, onInterrupt: () => {   } });
+if (t.children && t.children.length) t.children.forEach(child => processTweenNode(child, groupTl));
+currentTl.add(groupTl, t.position || '>');
+return;
+}
+
+const _resolveVideoEl = (id) => {
+  const el = document.getElementById(id);
+  if (!el) return null;
+  if (el.tagName.toLowerCase() === 'video') return el;
+  if (el.tagName.toLowerCase() === 'div' && /^node-\d+$/.test(id)) {
+    const videoChild = el.querySelector('video');
+    if (videoChild) return videoChild;
+  }
+  return null;
+};
+const targets = t.selectedElementIds.flatMap(id => {
+const el = document.getElementById(id); if(!el) return [];
+
+const videoEl = _resolveVideoEl(id);
+if (videoEl && videoEl !== el) return '#' + videoEl.id;
+const hasStagger = t.timingVars && t.timingVars.stagger && t.timingVars.stagger.amount > 0;
+if (el.hasAttribute('data-split-mode') && hasStagger) {
+if (el.tagName.toLowerCase() === 'text') return Array.from(el.querySelectorAll('tspan'));
+if (el.tagName.toLowerCase() === 'g') return Array.from(el.querySelectorAll('path'));
+}
+return '#' + id;
+});
+
+const _hasNodeWrappers = t.selectedElementIds.some(id => {
+  const el = document.getElementById(id);
+  if (!el) return false;
+  const tag = el.tagName.toLowerCase();
+  if (tag === 'div' && /^node-\d+$/.test(id)) {
+    
+    if (el.querySelector('video')) return true;
+    return true;
+  }
+  
+  if (['h1','h2','h3','p','span','video'].includes(tag)) return true;
+  return false;
+});
+if(targets.length === 0 && !t.viewBoxConfig && !t._videoPlayConfig) return;
+
+if (t._captionReset && t._captionNodeId && storedInitialStates) {
+  const nodeId = t._captionNodeId.replace(/^#/, '');
+  const stored = storedInitialStates.find(s => s.targets && s.targets.includes(nodeId));
+  if (stored && stored.vars) {
+    
+    t.toVars = { ...stored.vars, ...t.toVars };
+  }
+}
+const baseConfig = { duration: t.timingVars ? t.timingVars.duration : t.duration, ease: t.timingVars ? t.timingVars.ease : t.ease, repeat: t.timingVars ? t.timingVars.repeat : t.repeat, repeatDelay: t.timingVars ? t.timingVars.repeatDelay : t.repeatDelay, yoyo: t.timingVars ? t.timingVars.yoyo : t.yoyo, repeatRefresh: t.timingVars ? t.timingVars.repeatRefresh : t.repeatRefresh };
+const timingYoyoEaseEnabled = t.timingVars ? t.timingVars.yoyoEaseEnabled : false;
+if (baseConfig.yoyo && timingYoyoEaseEnabled && t.timingVars.yoyoEase) { baseConfig.yoyoEase = t.timingVars.yoyoEase === 'true' ? true : t.timingVars.yoyoEase; }
+let actualPos = t.position || '>';
+let elementsAnimated = false;
+if (targets.length > 0) {
+const baseVars = (t.type === 'from' || t.type === 'set') ? { ...t.fromVars, ...t.toVars } : { ...t.toVars };
+
+const vars = { ...baseVars };
+if (baseVars.attr) vars.attr = { ...baseVars.attr };
+if (baseVars.motionPath) vars.motionPath = { ...baseVars.motionPath };
+if (baseVars.stagger) vars.stagger = { ...baseVars.stagger };
+
+if (_hasNodeWrappers) { delete vars.attr; delete vars.motionPath; delete vars._cameraConfig; }
+if (Object.keys(vars).length > 0) {
+elementsAnimated = true;
+if (vars._cameraConfig && vars._cameraConfig.follow) {
+const camConfig = vars._cameraConfig; delete vars._cameraConfig;
+const targetEl = targets.length > 0 ? (typeof targets[0] === 'string' ? document.querySelector(targets[0]) : targets[0]) : null;
+let localPt = { x: 0, y: 0 };
+if (targetEl) { try { const b = targetEl.getBBox(); localPt = { x: b.x + b.width/2, y: b.y + b.height/2 }; } catch(e){} }
+
+const dampedVB = { x: null, y: null };
+vars.onUpdate = combineOnUpdate(vars.onUpdate, function () {
+if (!rootSvg || !originalViewBox.w || !targetEl) return;
+try {
+const svgCtm = rootSvg.getCTM();
+const elCtm = targetEl.getCTM();
+if (svgCtm && elCtm) {
+const relativeMatrix = svgCtm.inverse().multiply(elCtm);
+const pt = rootSvg.createSVGPoint();
+pt.x = localPt.x;
+pt.y = localPt.y;
+const globalPt = pt.matrixTransform(relativeMatrix);
+const cx = globalPt.x; const cy = globalPt.y;
+const zoomVal = camConfig.zoom || 100; const zoomFactor = 100 / zoomVal;
+const vbw = originalViewBox.w * zoomFactor; const vbh = originalViewBox.h * zoomFactor;
+const targetX = cx - (vbw / 2); const targetY = cy - (vbh / 2);
+const d = Math.max(0, Math.min(0.99, camConfig.damping || 0));
+if (d === 0 || dampedVB.x === null) {
+  
+  dampedVB.x = targetX; dampedVB.y = targetY;
+} else {
+  
+  dampedVB.x = dampedVB.x + (targetX - dampedVB.x) * (1 - d);
+  dampedVB.y = dampedVB.y + (targetY - dampedVB.y) * (1 - d);
+}
+rootSvg.setAttribute("viewBox", `${dampedVB.x} ${dampedVB.y} ${vbw} ${vbh}`);
+}
+} catch (e) { }
+});
+} else if (vars._cameraConfig) { delete vars._cameraConfig; }
+if (vars._fvs) {
+const targetAxes = vars._fvs.target; const defaultAxes = vars._fvs.defaults; delete vars._fvs;
+const resolvedTargets = targets.map(el => typeof el === 'string' ? document.querySelector(el) : el).filter(Boolean);
+resolvedTargets.forEach(el => {
+Object.keys(defaultAxes).forEach(tag => {
+if (!el.style.getPropertyValue(`--${tag}`)) {
+let existingVal = defaultAxes[tag]; let currentFVS = el.style.fontVariationSettings || el.getAttribute('font-variation-settings') || "";
+let match = currentFVS.match(new RegExp(`"${tag}"\\s*([\\d.]+)`)); if (match) existingVal = parseFloat(match[1]);
+el.style.setProperty(`--${tag}`, existingVal);
+}
+});
+});
+Object.keys(targetAxes).forEach(tag => { vars[`--${tag}`] = targetAxes[tag]; });
+vars.onUpdate = combineOnUpdate(vars.onUpdate, function() {
+this.targets().forEach(el => {
+let fvsArr = [];
+Object.keys(targetAxes).forEach(tag => { let val = el.style.getPropertyValue(`--${tag}`); if(val) fvsArr.push(`"${tag}" ${parseFloat(val).toFixed(2)}`); });
+if (fvsArr.length) el.style.fontVariationSettings = fvsArr.join(", ");
+});
+});
+}
+if (vars._timer) {
+const tm = vars._timer; delete vars._timer;
+vars.textContent = tm.endSeconds; if (t.type === 'from') vars.textContent = tm.startSeconds;
+if(t.type === 'to') currentTl.set(targets, { textContent: tm.startSeconds }, actualPos);
+vars.modifiers = { ...vars.modifiers, textContent: value => formatTime(parseFloat(value), tm.format) };
+}
+if (vars._counter) {
+const c = vars._counter; delete vars._counter; vars.textContent = c.value;
+vars.modifiers = {
+...vars.modifiers,
+textContent: value => {
+let num = parseFloat(value); if (isNaN(num)) num = 0;
+if (c.increment && c.increment > 0) num = gsap.utils.snap(c.increment, num);
+if (c.formatMode === 'currency' || c.formatMode === 'filesize') { const fVal = formatNumber(num, c.formatMode); if(fVal !== num) return `${c.prefix}${fVal}${c.suffix}`; }
+let formatted = Number(num || 0).toFixed(c.decimals || 0);
+if (c.decimalChar !== '.') formatted = formatted.replace('.', c.decimalChar);
+if (c.separatorChar) { const parts = formatted.split(c.decimalChar); parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, c.separatorChar); formatted = parts.join(c.decimalChar); }
+return `${c.prefix}${formatted}${c.suffix}`;
+}
+};
+}
+Object.keys(vars).forEach(k => {
+if (vars[k] && vars[k]._isExpr) {
+const expr = vars[k].val;
+vars[k] = (index, target, targetsArr) => {
+
+const svg = target.ownerSVGElement || target.closest('svg') || document.getElementById(rootSvgId);
+let initialBBox = {x:0, y:0}; try { initialBBox = target.getBBox(); } catch(e){}
+let vw = 100, vh = 100; if (svg && svg.viewBox && svg.viewBox.baseVal) { vw = svg.viewBox.baseVal.width; vh = svg.viewBox.baseVal.height; }
+const tProxy = AnimationEngine.createProxy(target); const tsProxy = targetsArr.map(el => AnimationEngine.createProxy(el));
+const dataLookup = {}; if (globalDataSources) globalDataSources.forEach(src => { dataLookup[src.name] = src.entries; });
+try {
+const result = evalSandboxed(expr, { i: index, t: tProxy, ts: tsProxy, vw, vh, Math, data: dataLookup, sortBy, rankOf, pluck });
+if (typeof result !== 'number' || isNaN(result)) return result;
+if (k === 'x') return result - initialBBox.x; if (k === 'y') return result - initialBBox.y; return result;
+} catch (e) { return 0; }
+};
+}
+});
+if (vars.attr) {
+Object.keys(vars.attr).forEach(k => {
+if (vars.attr[k] && vars.attr[k]._isExpr) {
+const expr = vars.attr[k].val;
+vars.attr[k] = (index, target, targetsArr) => {
+
+const svg = target.ownerSVGElement || target.closest('svg') || document.getElementById(rootSvgId);
+let vw = 100, vh = 100; if (svg && svg.viewBox && svg.viewBox.baseVal) { vw = svg.viewBox.baseVal.width; vh = svg.viewBox.baseVal.height; }
+const tProxy = AnimationEngine.createProxy(target); const tsProxy = targetsArr.map(el => AnimationEngine.createProxy(el));
+const dataLookup = {}; if (globalDataSources) globalDataSources.forEach(src => { dataLookup[src.name] = src.entries; });
+try { return evalSandboxed(expr, { i: index, t: tProxy, ts: tsProxy, vw, vh, Math, data: dataLookup, sortBy, rankOf, pluck }); } catch (e) { return 0; }
+};
+}
+});
+}
+if (vars._snap) { vars.modifiers = vars.modifiers || {}; vars.modifiers[vars._snap.prop] = gsap.utils.snap(vars._snap.value); delete vars._snap; }
+
+if (vars._textExpr && vars._textExpr._isExpr) {
+const exprSrc = vars._textExpr.val; const delimSrc = vars._textExpr.delimiter; delete vars._textExpr;
+vars.text = { delimiter: delimSrc, value: (index, target) => {
+const dataLookup = {}; if (globalDataSources) globalDataSources.forEach(src => { dataLookup[src.name] = src.entries; });
+const tProxy = AnimationEngine.createProxy(target);
+try { const r = evalSandboxed(exprSrc, { i: index, t: tProxy, ts: [], Math, data: dataLookup, sortBy, rankOf, pluck }); return String(r); } catch(e) { return ''; }
+}};
+}
+
+if (vars._textOriginal) {
+const tmpl = vars._textOriginal.template; const delimSrc = vars._textOriginal.delimiter; delete vars._textOriginal;
+vars.text = { delimiter: delimSrc, value: (i, target) => tmpl.replace(/\{original\}|\{text\}/g, target.getAttribute('data-original-text') || target.textContent.trim()) };
+}
+
+if (vars.scrambleText && vars.scrambleText._isExpr) {
+const exprSrc = vars.scrambleText._exprVal; const charTransform = vars.scrambleText.charTransform || 'none'; delete vars.scrambleText._isExpr; delete vars.scrambleText._exprVal; delete vars.scrambleText.charTransform;
+const applyCharTransform = (str, mode) => {
+if (mode === 'reverse') return str.split('').reverse().join('');
+if (mode === 'invertCase') return str.split('').map(c => c === c.toUpperCase() ? c.toLowerCase() : c.toUpperCase()).join('');
+if (mode === 'upper') return str.toUpperCase();
+if (mode === 'lower') return str.toLowerCase();
+return str;
+};
+vars.scrambleText.text = (index, target) => {
+const dataLookup = {}; if (globalDataSources) globalDataSources.forEach(src => { dataLookup[src.name] = src.entries; });
+const tProxy = AnimationEngine.createProxy(target);
+try { const r = evalSandboxed(exprSrc, { i: index, t: tProxy, ts: [], Math, data: dataLookup, sortBy, rankOf, pluck }); return applyCharTransform(String(r), charTransform); } catch(e) { return ''; }
+};
+}
+
+if (vars.scrambleText && vars.scrambleText._originalTemplate) {
+const tmpl = vars.scrambleText._originalTemplate; delete vars.scrambleText._originalTemplate;
+vars.scrambleText.text = (i, target) => tmpl.replace(/\{original\}|\{text\}/g, target.getAttribute('data-original-text') || target.textContent.trim());
+}
+
+if (vars._counter && vars._counter._valueExpr && vars._counter._valueExpr._isExpr) {
+const exprSrc = vars._counter._valueExpr.val; delete vars._counter._valueExpr;
+const resolveCounterVal = (index, target) => {
+const dataLookup = {}; if (globalDataSources) globalDataSources.forEach(src => { dataLookup[src.name] = src.entries; });
+const tProxy = AnimationEngine.createProxy(target);
+try { return parseFloat(evalSandboxed(exprSrc, { i: index, t: tProxy, ts: [], Math, data: dataLookup, sortBy, rankOf, pluck })) || 0; } catch(e) { return 0; }
+};
+
+const c = vars._counter; delete vars._counter;
+vars.textContent = resolveCounterVal;
+vars.modifiers = { ...vars.modifiers, textContent: value => {
+let num = parseFloat(value); if (isNaN(num)) num = 0;
+if (c.increment && c.increment > 0) num = gsap.utils.snap(c.increment, num);
+let formatted = Number(num).toFixed(c.decimals || 0);
+if (c.decimalChar !== '.') formatted = formatted.replace('.', c.decimalChar);
+if (c.separatorChar) { const pts = formatted.split(c.decimalChar); pts[0] = pts[0].replace(/\B(?=(\d{3})+(?!\d))/g, c.separatorChar); formatted = pts.join(c.decimalChar); }
+return (c.prefix || '') + formatted + (c.suffix || '');
+}};
+}
+let staggerConfig = t.stagger ? t.stagger.amount : 0;
+
+if (t.stagger && t.stagger.amount !== 0 && (t.stagger.advanced || t.stagger.mode === 'amount')) {
+staggerConfig = { [t.stagger.mode]: t.stagger.amount };
+if (t.stagger.advanced) {
+staggerConfig.from = t.stagger.from;
+if (t.stagger.axis) staggerConfig.axis = t.stagger.axis;
+if (t.stagger.grid && t.stagger.grid !== 'auto') {
+const gInput = String(t.stagger.grid).trim(); const parsed = gInput.replace(/[\[\]]/g, '').split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n)); staggerConfig.grid = parsed.length > 0 ? parsed : 'auto';
+} else { staggerConfig.grid = 'auto'; } 
+}
+if (t.stagger.ease && t.stagger.ease !== 'none') staggerConfig.ease = t.stagger.ease;
+}
+if (t.type === 'set') { currentTl.set(targets, { ...vars, stagger: staggerConfig }, actualPos); }
+else { const finalVars = { id: t.id, ...baseConfig, stagger: staggerConfig, overwrite: 'auto', ...vars }; if (t.type === 'from') finalVars.immediateRender = false; currentTl[t.type](targets, finalVars, actualPos); }
+}
+}
+if (t.viewBoxConfig) {
+const cameraPos = elementsAnimated ? "<" : actualPos;
+const vbTargetId = (t.viewBoxConfig._vbNodeId) ? t.viewBoxConfig._vbNodeId : rootSvgId;
+const vbConfig = Object.assign({}, t.viewBoxConfig); delete vbConfig._vbNodeId;
+const vbVars = { ...baseConfig, ...vbConfig };
+if (t.type === 'set') { currentTl.set(`#${vbTargetId}`, vbConfig, cameraPos); }
+else { if (t.type === 'from') vbVars.immediateRender = false; if (t.type === 'from') vbVars.lazy = false; currentTl[t.type](`#${vbTargetId}`, vbVars, cameraPos); }
+}
+
+// ── Video Play Parallel Tween ──────────────────────────────────────────────
+// GSAP only schedules native play()/pause() calls at the right points in the
+// timeline; the browser decodes/renders the video itself. (The previous
+// approach tweened `currentTime` every frame, which works for one video but
+// causes simultaneous decoders to deadlock — every video freezes — once more
+// than one is active at the same time.)
+if (t._videoPlayConfig) {
+  const vpc = t._videoPlayConfig;
+  const _vEl = document.getElementById(vpc.slotId);
+  if (!_vEl || _vEl.tagName.toLowerCase() !== 'video') {
+    // The slot this tween references no longer exists in the DOM — most likely
+    // the video was replaced or the node was deleted after the tween was saved.
+    console.warn(`[QweenApp] Video tween references slot "${vpc.slotId}" which is not in the DOM. Playback skipped.`);
+    ElMessage.warning(`Video tween: slot "${vpc.slotId}" not found — re-select the video and re-save the tween.`);
+  } else {
+    const _vPos = elementsAnimated ? '<' : actualPos;
+    // Clamp toTime to the video's actual duration so we never play past end
+    const _actualMax = (_vEl.duration && isFinite(_vEl.duration)) ? _vEl.duration : Infinity;
+    const _safeFrom = parseFloat(Math.max(0, vpc.fromTime).toFixed(3));
+    const _safeTo   = parseFloat(Math.min(vpc.toTime, _actualMax).toFixed(3));
+    // Round _vDur to 3dp to avoid floating-point subtraction drift
+    const _vDur = parseFloat((_safeTo - _safeFrom).toFixed(3)) || baseConfig.duration || 1;
+
+    // Prime the element to its start frame and mark it inactive until GSAP
+    // reaches the play point.
+    _vEl.pause();
+    if (_vEl.readyState >= 1) {
+      _vEl.currentTime = _safeFrom;
+    }
+    _vEl.dataset.qwVideoActive = '0';
+    _vEl.dataset.qwVideoFrom = String(_safeFrom);
+    _vEl.dataset.qwVideoTo = String(_safeTo);
+
+    // Anchor both the play() and pause() calls to the same resolved position
+    // via a label, so pause lands exactly _vDur seconds after play regardless
+    // of whether _vPos is '<', '>', an absolute time, or a label.
+    const _vLabel = `__vplay_${_videoPlayLabelCounter++}`;
+    currentTl.addLabel(_vLabel, _vPos);
+
+    // ── Clip-range looping via timeupdate ────────────────────────────────
+    // When repeat ≠ 0, a timeupdate listener jumps currentTime back to
+    // fromTime each time it reaches toTime, giving a clip-range loop.
+    // repeat: -1 = infinite, repeat: N = N extra plays (so N+1 total).
+    // The GSAP pause call is pushed out to cover all repeats so it doesn't
+    // cut the video short before the loops finish.
+    const _vRepeat = baseConfig.repeat; // 0 = once, -1 = infinite, N = N extra plays
+    // Total GSAP window: for finite repeat, _vDur * (repeat+1); for infinite, _vDur (pause call is never the terminator anyway)
+    const _vTotalDur = (_vRepeat > 0) ? parseFloat((_vDur * (_vRepeat + 1)).toFixed(3)) : _vDur;
+    let _clipLoopListener = null;
+    let _clipLoopCount = 0;
+    if (_vRepeat !== 0) {
+      _clipLoopListener = () => {
+        if (_vEl.dataset.qwVideoActive !== '1') return;
+        if (_vEl.currentTime >= _safeTo - 0.04) {
+          if (_vRepeat === -1 || _clipLoopCount < _vRepeat) {
+            _clipLoopCount++;
+            _vEl.currentTime = _safeFrom;
+            const p = _vEl.play();
+            if (p && typeof p.catch === 'function') p.catch(() => {});
+          }
+        }
+      };
+    }
+
+    // ── Play call ────────────────────────────────────────────────────────
+    // In reverse mode the timeline plays backwards, but native <video> has
+    // no reliable reverse decode — so we just play forward from fromTime as
+    // normal. It won't be perfectly in sync with reversed SVG motion, but
+    // it's far better than a frozen frame or a silent no-op.
+    currentTl.call(() => {
+      _clipLoopCount = 0;
+      _vEl.currentTime = _safeFrom;
+      _vEl.dataset.qwVideoActive = '1';
+      _vEl.playbackRate = getEffectiveTimeScale(currentTl);
+      if (_clipLoopListener) _vEl.addEventListener('timeupdate', _clipLoopListener);
+      const p = _vEl.play();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    }, null, _vLabel);
+
+    currentTl.call(() => {
+      if (_clipLoopListener) _vEl.removeEventListener('timeupdate', _clipLoopListener);
+      _vEl.pause();
+      _vEl.dataset.qwVideoActive = '0';
+    }, null, `${_vLabel}+=${_vTotalDur}`);
+
+    _videoPlayEntries.push({ el: _vEl, from: _safeFrom, to: _safeTo, tl: currentTl, loopListener: _clipLoopListener });
+  }
+}
+
+};
+tweens.forEach(t => processTweenNode(t, masterTl));
+
+masterTl._videoPlayEntries = _videoPlayEntries;
+return masterTl;
+}
+};
+
+// ─────────────────────────────────────────────────────────────
+// UI helpers
+// ─────────────────────────────────────────────────────────────
+const $status     = document.getElementById('status');
+const $statusText = document.getElementById('status-text');
+const $statusErr  = document.getElementById('status-error');
+const $statusIcon = document.getElementById('status-icon');
+
+function setStatus(msg) { $statusText.textContent = msg; }
+function showError(msg) {
+  $statusErr.textContent = '⚠ ' + msg;
+  $statusErr.style.display = 'block';
+  $statusIcon.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f56c6c" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`;
+  $statusText.style.display = 'none';
+}
+function hideStatus() {
+  $status.classList.add('hidden');
+  setTimeout(() => { $status.style.display = 'none'; }, 450);
+}
+
+// ─────────────────────────────────────────────────────────────
+// DOM builder — recreates nodes like QweenApp does
+// ─────────────────────────────────────────────────────────────
+function buildDom(project) {
+  const frame = document.getElementById('frame');
+  frame.innerHTML = '';
+
+  const nodes = project.nodes || [];
+  if (!nodes.length) throw new Error('Project has no nodes');
+
+  // Use first node dimensions to set aspect ratio
+  const n0 = nodes[0];
+  const W = n0.width, H = n0.height;
+
+  // Size the frame to fill the viewport while preserving aspect ratio
+  sizeFrame(W, H);
+  window.addEventListener('resize', () => sizeFrame(W, H));
+
+  nodes.forEach((saved, ni) => {
+    const nodeType = saved.type || 'svg';
+    const nodeDiv = document.createElement('div');
+    nodeDiv.id = saved.id;
+    nodeDiv.className = 'qw-node';
+    nodeDiv.style.zIndex = (ni + 2).toString();
+    if (saved.visible === false) nodeDiv.style.display = 'none';
+
+    if (nodeType === 'svg') {
+      const wrapper = document.createElement('div');
+      wrapper.style.cssText = 'width:100%;height:100%;overflow:hidden;';
+      wrapper.innerHTML = saved._svgContent || '';
+      nodeDiv.appendChild(wrapper);
+    } else if (nodeType === 'video') {
+      const slots = saved._videoSlots && saved._videoSlots.length ? saved._videoSlots : [saved._videoContent];
+      slots.forEach((slot, si) => {
+        if (!slot) return;
+        const vid = document.createElement('video');
+        vid.id = slot._treeId || (saved.id.replace(/^node-/,'n') + '_video-' + (si+1));
+        if (slot.src) vid.src = slot.src;
+        if (slot.poster) vid.poster = slot.poster;
+        vid.muted = true;
+        vid.playsInline = true;
+        vid.preload = 'auto';
+        vid.style.zIndex = (si + 1).toString();
+        nodeDiv.appendChild(vid);
+      });
+    } else if (nodeType === 'text') {
+      const tc = saved._textContent || {};
+      const textWrapper = document.createElement('div');
+      textWrapper.id = saved.id + '_text';
+      textWrapper.style.cssText = 'width:100%;height:100%;display:flex;align-items:center;justify-content:center;';
+      textWrapper.innerHTML = tc.html || '';
+      nodeDiv.appendChild(textWrapper);
+    }
+
+    frame.appendChild(nodeDiv);
+  });
+
+  // Ensure first SVG node gets root id for viewBox camera
+  const firstSvgNode = nodes.find(n => !n.type || n.type === 'svg');
+  if (firstSvgNode) {
+    const nodeEl = document.getElementById(firstSvgNode.id);
+    const svg = nodeEl ? nodeEl.querySelector('svg') : null;
+    if (svg && !svg.id) svg.id = 'main-svg-root';
+    if (svg && svg.id) return svg.id; // return rootSvgId
+  }
+  return 'main-svg-root';
+}
+
+function sizeFrame(W, H) {
+  const frame = document.getElementById('frame');
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const scale = Math.min(vw / W, vh / H);
+  const fw = W * scale, fh = H * scale;
+  frame.style.width  = fw + 'px';
+  frame.style.height = fh + 'px';
+}
+
+// ─────────────────────────────────────────────────────────────
+// Preload images & warm up videos (verbatim logic from QweenApp)
+// ─────────────────────────────────────────────────────────────
+async function preloadAssets() {
+  const urls = new Set();
+  document.querySelectorAll('image').forEach(img => {
+    const href = img.getAttribute('href') || img.getAttribute('xlink:href');
+    if (href && !href.startsWith('data:')) urls.add(href);
+  });
+  const videoEls = Array.from(document.querySelectorAll('video'));
+  const warmUp = v => new Promise(res => {
+    if (!v.src) return res();
+    if (v.readyState >= 3) return res();
+    const done = () => { v.removeEventListener('canplaythrough', done); v.removeEventListener('error', done); res(); };
+    v.addEventListener('canplaythrough', done, { once: true });
+    v.addEventListener('error', done, { once: true });
+    if (v.readyState === 0) v.load();
+  });
+  await Promise.all([
+    ...[...urls].map(url => { const img = new Image(); img.src = url; return img.decode().catch(()=>{}); }),
+    ...videoEls.map(v => warmUp(v)),
+  ]);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Apply initial states (verbatim from QweenApp)
+// ─────────────────────────────────────────────────────────────
+function applyInitialStates(initialStates, rootSvgId) {
+  if (!initialStates || !initialStates.length) return;
+  initialStates.forEach(state => {
+    if (state.targets && state.targets.length)
+      gsap.set(state.targets.map(id => '#' + id), { ...state.vars, immediateRender: true });
+    else if (state.isViewBox)
+      gsap.set('#' + rootSvgId, { ...state.vars, immediateRender: true });
+  });
+}
+
+// ─────────────────────────────────────────────────────────────
+// Main: fetch → unzip → render
+// ─────────────────────────────────────────────────────────────
+async function run() {
+  // Parse ?src= param
+  const params = new URLSearchParams(location.search);
+  const src = params.get('src');
+
+  if (!src) {
+    showError('No project URL provided.\nUsage: QweenRender.html?src=https://…/project.zip');
+    return;
+  }
+
+  try {
+    // ── 1. Fetch the zip ───────────────────────────────────
+    setStatus('Fetching project…');
+    const res = await fetch(src);
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+
+    const buffer = await res.arrayBuffer();
+
+    // ── 2. Unzip ───────────────────────────────────────────
+    setStatus('Unpacking…');
+    const zip = await JSZip.loadAsync(buffer);
+    const jsonEntry = zip.file('project.json');
+    if (!jsonEntry) throw new Error('Invalid project: missing project.json');
+    const project = JSON.parse(await jsonEntry.async('string'));
+
+    // Restore data sources stored as external files
+    if (project.globalDataSources && project.globalDataSources.length) {
+      project.globalDataSources = await Promise.all(project.globalDataSources.map(async src => {
+        if (src._dataFile) {
+          const fe = zip.file(`data/${src._dataFile}`);
+          if (fe) {
+            try {
+              const text = await fe.async('string');
+              const { _dataFile, ...rest } = src;
+              return { ...rest, entries: JSON.parse(text) };
+            } catch(e) { console.warn('Failed to load data file:', src.name, e); }
+          }
+        }
+        return src;
+      }));
+    }
+
+    // ── 2b. Restore video blobs from assets/ in the ZIP ──────────────────────
+    // When QweenRender is driven by a project ZIP (either exported from QweenApp
+    // or written by the API's render-project path), video blobs are embedded under
+    // assets/<filename>.  Restore them as object URLs so <video src> works inside
+    // the headless Playwright browser without needing an external asset server.
+    for (const node of (project.nodes || [])) {
+      if (node.type !== 'video') continue;
+      const slots = (node._videoSlots && node._videoSlots.length)
+        ? node._videoSlots
+        : (node._videoContent ? [node._videoContent] : []);
+      for (const slot of slots) {
+        // Treat missing or stale blob:null/… URLs the same as absent src
+        const _srcIsStale = !slot.src || slot.src.startsWith('blob:null');
+        if (!slot || !_srcIsStale) continue;
+        const assetFile = slot._assetFile || slot._label;
+        if (!assetFile) continue;
+        const entry = zip.file(`assets/${assetFile}`);
+        if (!entry) continue;
+        try {
+          const ab = await entry.async('arraybuffer');
+          slot.src = URL.createObjectURL(
+            new Blob([ab], { type: slot.mimeType || 'video/mp4' })
+          );
+        } catch (e) {
+          console.warn('[QweenRender] Failed to restore blob from ZIP assets/', assetFile, e);
+        }
+      }
+      // Keep _videoSlots and _videoContent in sync
+      if (!node._videoSlots) node._videoSlots = slots;
+      node._videoContent = slots[0] || node._videoContent;
+    }
+
+    // ── 3. Build DOM ───────────────────────────────────────
+    setStatus('Building scene…');
+    const rootSvgId = buildDom(project);
+
+    // ── 4. Set original viewBox ────────────────────────────
+    const rootSvg = document.getElementById(rootSvgId);
+    const originalViewBox = { x:0, y:0, w:100, h:100 };
+    if (rootSvg) {
+      const vb = rootSvg.getAttribute('viewBox');
+      if (vb) {
+        const parts = vb.split(/\s+|,/);
+        Object.assign(originalViewBox, { x:parseFloat(parts[0]), y:parseFloat(parts[1]), w:parseFloat(parts[2]), h:parseFloat(parts[3]) });
+      }
+    }
+
+    // ── 5. Apply initial states ────────────────────────────
+    applyInitialStates(project.initialStates || [], rootSvgId);
+
+    // ── 6. Preload ─────────────────────────────────────────
+    setStatus('Preloading assets…');
+    await preloadAssets();
+
+    // ── 7. Hide overlay & play ─────────────────────────────
+    hideStatus();
+
+    // Set will-change hints
+    const collectIds = (tweens) => {
+      const ids = new Set();
+      const c = t => { if(t.isGroup && t.children) t.children.forEach(c); else if(t.selectedElementIds) t.selectedElementIds.forEach(id => ids.add(id)); };
+      tweens.forEach(c);
+      return ids;
+    };
+    collectIds(project.tweens || []).forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.willChange = 'transform, opacity';
+    });
+
+    // ── Playwright headless hooks ────────────────────────────────────────────
+    window.__qween_ready       = false;
+    window.__qween_frame_ready = false;
+    window.__qween_master_tl   = null;
+
+    // __qween_set_layer_mode(mode, zMin, zMax)
+    // Used by the Python renderer for multi-pass video compositing.
+    //
+    // Earlier versions split nodes into two fixed buckets ("below the lowest
+    // video" / "above the highest video"), which broke as soon as there was
+    // more than one video node or a layer sandwiched between two videos —
+    // that middle layer satisfied neither bucket and simply never rendered.
+    //
+    // This version works in terms of an explicit z-index band instead: only
+    // nodes whose DOM zIndex falls strictly between zMin and zMax are shown.
+    // The Python side derives zMin/zMax for every gap between (and around)
+    // the stacked video nodes — see _run_playwright_render — so an arbitrary
+    // number of videos, in any order, each get their own band on either side.
+    //
+    // mode:
+    //   'normal' — all nodes visible, opaque black background (default)
+    //   'band'   — only nodes with zMin < zIndex < zMax visible;
+    //              body/html background set transparent for PNG alpha capture
+    // zMin / zMax: pass null for an open-ended bound, e.g. zMin=null means
+    //              "everything below zMax" (the lowest band has no floor).
+    window.__qween_set_layer_mode = function(mode, zMin, zMax) {
+      const nodeEls = Array.from(document.querySelectorAll('.qw-node'));
+
+      if (mode === 'normal') {
+        document.documentElement.style.background = '';
+        document.body.style.background = '';
+        nodeEls.forEach(el => { el.style.visibility = ''; });
+      } else if (mode === 'band') {
+        const lo = (zMin === null || zMin === undefined) ? -Infinity : zMin;
+        const hi = (zMax === null || zMax === undefined) ? Infinity : zMax;
+        document.documentElement.style.background = 'transparent';
+        document.body.style.background = 'transparent';
+        nodeEls.forEach(el => {
+          const z = parseInt(el.style.zIndex, 10) || 0;
+          el.style.visibility = (z > lo && z < hi) ? 'visible' : 'hidden';
+        });
+      }
+    };
+
+    window.__qween_seek = async function(t) {
+      window.__qween_frame_ready = false;
+      const masterTl = window.__qween_master_tl;
+      if (masterTl) masterTl.pause(t);
+
+      // The v222 AnimationEngine drives videos via native play()/pause() calls
+      // anchored to timeline labels rather than tweening currentTime each frame.
+      // When Playwright seeks to an arbitrary time t we must:
+      //   1. Pause every video and clear the qwVideoActive flag so the GSAP
+      //      call() callbacks don't fight us.
+      //   2. Work out where each video's clip should be at time t by consulting
+      //      the _videoPlayEntries registry the engine writes on buildTimeline.
+      //   3. Seek each video to that position and wait for the seeked event.
+      const entries = (masterTl && masterTl._videoPlayEntries) || [];
+      const seen = new Set();
+
+      const waits = entries.map(entry => {
+        const v = entry.el;
+        if (!v || seen.has(v)) return Promise.resolve();
+        seen.add(v);
+
+        // Clear active flag so timeupdate clip-loop listeners don't interfere
+        v.dataset.qwVideoActive = '0';
+        v.pause();
+
+        if (v.readyState < 1 || isNaN(v.duration)) return Promise.resolve();
+
+        // Determine which frame within the clip [from, to] to show at timeline time t.
+        // If t is before the clip starts → show the first frame (fromTime).
+        // If t is within the clip → show (fromTime + offset).
+        // If t is after the clip ends → show the last frame (toTime).
+        const clipFrom   = entry.from;
+        const clipTo     = entry.to;
+        const clipDur    = clipTo - clipFrom;
+
+        // Find when this clip's GSAP call() fires by checking the timeline label.
+        // As a practical proxy we use the clip's position in the master timeline:
+        // masterTl.time() is already set to t above, so we look at where the
+        // tween that owns this entry starts. If _videoPlayEntries carry no
+        // explicit start-time we fall back to seeking to fromTime (first frame).
+        let targetTime = clipFrom; // default: first frame
+        if (clipDur > 0) {
+          // Try to find the play label time so we can compute offset
+          const labelTime = (() => {
+            if (!masterTl || !masterTl.labels) return null;
+            // Labels named __vplay_N were added by buildTimeline
+            for (const [name, lTime] of Object.entries(masterTl.labels)) {
+              if (!name.startsWith('__vplay_')) continue;
+              // Check if this label's tween corresponds to our video element by
+              // walking child tweens (expensive but only runs at seek time)
+              const children = masterTl.getChildren(true, false, true);
+              for (const child of children) {
+                if (child._label === name && child.targets && child.targets().includes(v)) {
+                  return lTime;
+                }
+              }
+              // Simpler: if there's only one video active, any __vplay_ label is ours
+              if (entries.length === 1) return lTime;
+            }
+            return null;
+          })();
+
+          if (labelTime !== null) {
+            const offset = t - labelTime;
+            if (offset < 0) {
+              targetTime = clipFrom;           // before clip starts
+            } else if (offset >= clipDur) {
+              targetTime = clipTo - 0.001;     // past end, park on last frame
+            } else {
+              targetTime = clipFrom + (offset % clipDur); // within clip
+            }
+          }
+        }
+
+        const clamped = Math.min(Math.max(targetTime, 0), v.duration);
+        if (Math.abs(v.currentTime - clamped) < 0.001) return Promise.resolve();
+        v.currentTime = clamped;
+        return new Promise(r => {
+          const done = () => { v.removeEventListener('seeked', done); r(); };
+          v.addEventListener('seeked', done, { once: true });
+          setTimeout(done, 500); // safety fallback
+        });
+      });
+
+      // Also handle any videos that are in the DOM but not in _videoPlayEntries
+      // (e.g. nodes whose tween hasn't fired yet) — just pause them silently.
+      Array.from(document.querySelectorAll('video')).forEach(v => {
+        if (!seen.has(v)) { v.dataset.qwVideoActive = '0'; v.pause(); }
+      });
+
+      if (waits.length) await Promise.all(waits);
+
+      // Two rAF passes to ensure browser has painted the new frame
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      window.__qween_frame_ready = true;
+    };
+
+    requestAnimationFrame(() => {
+      const ctx = gsap.context(() => {});
+
+      ctx.add(() => {
+        // Re-apply initial states inside GSAP context
+        applyInitialStates(project.initialStates || [], rootSvgId);
+
+        const mm = gsap.matchMedia();
+        mm.add({
+          full:    '(prefers-reduced-motion: no-preference)',
+          reduced: '(prefers-reduced-motion: reduce)',
+        }, (mmCtx) => {
+          const isReduced = !mmCtx.conditions.full;
+          const tl = AnimationEngine.buildTimeline(
+            project.tweens || [],
+            !!project.timelineLoop,
+            !!project.timelineYoyo,
+            rootSvgId,
+            {
+              onComplete: () => {
+                collectIds(project.tweens||[]).forEach(id => { const el=document.getElementById(id); if(el) el.style.willChange='auto'; });
+              },
+              onStart: () => {},
+              onRepeat: () => {},
+            },
+            originalViewBox,
+            !!project.timelineReverse,
+            project.globalDataSources || [],
+            project.swapTemplates || [],
+            project.initialStates || [],
+          );
+
+          const speed = 1; // could expose via ?speed= param later
+          if (isReduced) {
+            tl.timeScale(speed).progress(1).pause();
+          } else if (project.timelineReverse) {
+            tl.timeScale(speed).totalProgress(1).reverse();
+          } else {
+            tl.timeScale(speed).play(0);
+          }
+
+          // Expose to Playwright
+          window.__qween_master_tl = tl;
+          window.__qween_ready     = true;
+        });
+      });
+    });
+
+  } catch (err) {
+    console.error('[QweenRender]', err);
+    showError(err.message || String(err));
+  }
+}
+
+run();
+</script>
+</body>
+</html>
