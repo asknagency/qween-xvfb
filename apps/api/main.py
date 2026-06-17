@@ -259,14 +259,12 @@ def _run_xvfb_render(job_id: str, job_dir: Path, payload: dict,
         debug_port = 9222 + (disp - _DISPLAY_START)  # unique port per display
         chromium_cmd = [
             "chrome",  # overridden below from CHROMIUM_BIN env
-            f"--display=:{disp}",
             "--no-sandbox",
             "--disable-setuid-sandbox",
             "--autoplay-policy=no-user-gesture-required",
             "--disable-web-security",
             f"--remote-debugging-port={debug_port}",
-            "--window-size={stage_w},{stage_h}",
-            "--start-maximized",
+            f"--window-size={stage_w},{stage_h}",
             "--disable-infobars",
             "--disable-extensions",
             "--hide-scrollbars",
@@ -381,47 +379,46 @@ def _run_xvfb_render(job_id: str, job_dir: Path, payload: dict,
         _release_display(disp)
 
 
-# ── CDP helpers ───────────────────────────────────────────────────────────────
+# ── CDP helpers (WebSocket-based via Playwright) ──────────────────────────────
 def _cdp_eval(port: int, expression: str) -> Any:
-    """Evaluate JS in the first page via Chrome DevTools Protocol REST API."""
-    import urllib.request, urllib.error
-    try:
-        # Get the list of targets
-        with urllib.request.urlopen(f"http://localhost:{port}/json", timeout=5) as r:
-            targets = json.loads(r.read())
-        page_target = next(
-            (t for t in targets if t.get("type") == "page"),
-            None,
-        )
-        if not page_target:
+    """Evaluate JS in the first page via Playwright connect_over_cdp (WebSocket)."""
+    import asyncio
+
+    async def _eval():
+        try:
+            from playwright.async_api import async_playwright
+            async with async_playwright() as pw:
+                browser = await pw.chromium.connect_over_cdp(f"http://localhost:{port}")
+                ctx  = browser.contexts[0] if browser.contexts else None
+                page = ctx.pages[0] if ctx and ctx.pages else None
+                if not page:
+                    await browser.close()
+                    return None
+                result = await page.evaluate(expression)
+                await browser.close()
+                return result
+        except Exception:
             return None
-        ws_url = page_target.get("webSocketDebuggerUrl", "")
-        # Use the simpler HTTP /json/eval endpoint if available
-        eval_url = f"http://localhost:{port}/json/eval/{page_target['id']}"
-        # Fall back to websocket eval via playwright-python or websockets
-        # For simplicity in this server, we use the CDP HTTP evaluate endpoint
-        import urllib.parse
-        encoded = urllib.parse.quote(expression)
-        req_url = f"http://localhost:{port}/json/runtime/evaluate?expression={encoded}&targetId={page_target['id']}"
-        with urllib.request.urlopen(req_url, timeout=5) as r:
-            result = json.loads(r.read())
-        return result.get("result", {}).get("value")
-    except Exception:
-        return None
+
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(_eval())
+    finally:
+        loop.close()
 
 
 def _cdp_wait_ready(port: int, timeout: int = 60) -> bool:
-    """Poll __qween_ready via CDP until true or timeout."""
+    """Poll __qween_ready via CDP WebSocket until true or timeout."""
     import urllib.request
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
+            # Wait for CDP HTTP to come up first
             with urllib.request.urlopen(f"http://localhost:{port}/json", timeout=3) as r:
                 targets = json.loads(r.read())
             if targets:
-                # CDP is up — check __qween_ready
                 val = _cdp_eval(port, "!!window.__qween_ready")
-                if val is True or val == "true":
+                if val is True:
                     return True
         except Exception:
             pass
