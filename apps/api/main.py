@@ -258,7 +258,7 @@ def _run_xvfb_render(job_id: str, job_dir: Path, payload: dict,
         # ── 3. Launch Chromium non-headless ──────────────────────────────────
         debug_port = 9222 + (disp - _DISPLAY_START)  # unique port per display
         chromium_cmd = [
-            "google-chrome-stable",  # or "chromium" — set via env CHROMIUM_BIN
+            "chrome",  # overridden below from CHROMIUM_BIN env
             f"--display=:{disp}",
             "--no-sandbox",
             "--disable-setuid-sandbox",
@@ -272,7 +272,9 @@ def _run_xvfb_render(job_id: str, job_dir: Path, payload: dict,
             "--hide-scrollbars",
             f"--app={render_url}",
         ]
-        chromium_bin = os.environ.get("CHROMIUM_BIN", "google-chrome-stable")
+        chromium_bin = os.environ.get("CHROMIUM_BIN") or shutil.which("google-chrome-stable") or shutil.which("google-chrome") or shutil.which("chromium-browser") or shutil.which("chromium")
+        if not chromium_bin:
+            raise RuntimeError("No Chromium binary found. Set CHROMIUM_BIN in .env")
         chromium_cmd[0] = chromium_bin
 
         env = {**os.environ, "DISPLAY": f":{disp}"}
@@ -434,10 +436,13 @@ async def health():
     checks = {}
     checks["ffmpeg"]   = shutil.which("ffmpeg") is not None
     checks["Xvfb"]     = shutil.which("Xvfb") is not None
-    checks["chromium"] = (
-        shutil.which("chromium-browser") is not None
-        or shutil.which("google-chrome") is not None
-        or shutil.which(os.environ.get("CHROMIUM_BIN", "chromium-browser")) is not None
+    chromium_bin = os.environ.get("CHROMIUM_BIN", "")
+    checks["chromium"] = bool(
+        (chromium_bin and (shutil.which(chromium_bin) or os.path.isfile(chromium_bin)))
+        or shutil.which("google-chrome-stable")
+        or shutil.which("google-chrome")
+        or shutil.which("chromium-browser")
+        or shutil.which("chromium")
     )
     checks["displays_available"] = len(_display_pool) - len(_display_in_use)
     ok = all(v for k, v in checks.items() if k != "displays_available")

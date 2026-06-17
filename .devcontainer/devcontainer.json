@@ -1,0 +1,23 @@
+{
+  "name": "qween-xvfb",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "forwardPorts": [8000, 3001],
+  "portsAttributes": {
+    "8000": {
+      "label": "FastAPI (Render API)",
+      "onAutoForward": "notify"
+    },
+    "3001": {
+      "label": "Node (Static Renderer)",
+      "onAutoForward": "notify"
+    }
+  },
+  "postCreateCommand": "pnpm install && [ -f .env ] || cp .env.example .env && python3 -c \"import subprocess,shlex; path=subprocess.check_output(['python3','-m','playwright','show-trace','--help'],stderr=subprocess.DEVNULL); \" || true",
+  "remoteEnv": {
+    "RENDERER_URL": "http://localhost:3001",
+    "MAX_CONCURRENT_RENDERS": "2"
+  }
+}
