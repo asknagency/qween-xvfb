@@ -258,7 +258,7 @@ def _run_xvfb_render(job_id: str, job_dir: Path, payload: dict,
         # ── 3. Launch Chromium non-headless ──────────────────────────────────
         debug_port = 9222 + (disp - _DISPLAY_START)  # unique port per display
         chromium_cmd = [
-            "chromium-browser",  # or "google-chrome" — set via env CHROMIUM_BIN
+            "google-chrome-stable",  # or "chromium" — set via env CHROMIUM_BIN
             f"--display=:{disp}",
             "--no-sandbox",
             "--disable-setuid-sandbox",
@@ -272,7 +272,7 @@ def _run_xvfb_render(job_id: str, job_dir: Path, payload: dict,
             "--hide-scrollbars",
             f"--app={render_url}",
         ]
-        chromium_bin = os.environ.get("CHROMIUM_BIN", "chromium-browser")
+        chromium_bin = os.environ.get("CHROMIUM_BIN", "google-chrome-stable")
         chromium_cmd[0] = chromium_bin
 
         env = {**os.environ, "DISPLAY": f":{disp}"}
