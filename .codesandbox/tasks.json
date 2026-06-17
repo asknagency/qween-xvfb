@@ -2,6 +2,10 @@
   "$schema": "https://schemas.codesandbox.io/configuration/tasks.json",
   "setupTasks": [
     {
+      "name": "Install system deps (Xvfb, Chrome, FFmpeg)",
+      "command": "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb ffmpeg x11-utils xdotool fonts-liberation libglib2.0-0 libnss3 libnspr4 libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 libpango-1.0-0 libcairo2 wget && wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && apt-get install -y /tmp/chrome.deb && rm /tmp/chrome.deb"
+    },
+    {
       "name": "Install Node deps",
       "command": "pnpm install"
     },
@@ -10,8 +14,8 @@
       "command": "cd apps/api && pip install -r requirements.txt"
     },
     {
-      "name": "Set CHROMIUM_BIN in .env",
-      "command": "[ -f .env ] || cp .env.example .env && CHROME=$(find /ms-playwright -name 'chrome' -type f 2>/dev/null | head -1) && [ -n \"$CHROME\" ] && sed -i \"s|CHROMIUM_BIN=.*|CHROMIUM_BIN=$CHROME|\" .env && echo \"Chrome found: $CHROME\" || echo 'WARNING: chrome binary not found'"
+      "name": "Create .env",
+      "command": "[ -f .env ] || cp .env.example .env"
     }
   ],
   "tasks": {
@@ -25,7 +29,7 @@
     },
     "dev:api": {
       "name": "▶ API (FastAPI :8000)",
-      "command": "cd apps/api && uvicorn main:app --reload --port 8000 --host 0.0.0.0",
+      "command": "cd apps/api && CHROMIUM_BIN=google-chrome-stable uvicorn main:app --reload --port 8000 --host 0.0.0.0",
       "runAtStart": true,
       "preview": {
         "port": 8000
