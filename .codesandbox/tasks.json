@@ -33,7 +33,7 @@
     },
     "dev:api": {
       "name": "▶ API (FastAPI :8000)",
-      "command": "cd apps/api && uvicorn main:app --reload --port 8000 --host 0.0.0.0",
+      "command": "cd apps/api && CHROMIUM_BIN=chromium uvicorn main:app --reload --port 8000 --host 0.0.0.0",
       "runAtStart": true,
       "preview": {
         "port": 8000
