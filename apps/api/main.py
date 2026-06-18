@@ -386,33 +386,48 @@ def _run_xvfb_render(job_id: str, job_dir: Path, payload: dict,
         _release_display(disp)
 
 
-# ── CDP helpers (WebSocket-based via Playwright) ──────────────────────────────
+# ── CDP helpers (raw WebSocket — works from any thread) ───────────────────────
 def _cdp_eval(port: int, expression: str) -> Any:
-    """Evaluate JS in the first page via Playwright connect_over_cdp (WebSocket)."""
-    import asyncio
+    """Evaluate JS via raw CDP WebSocket. Works from background threads."""
+    import urllib.request, json as _json, asyncio
 
-    async def _eval():
-        try:
-            from playwright.async_api import async_playwright
-            async with async_playwright() as pw:
-                browser = await pw.chromium.connect_over_cdp(f"http://localhost:{port}")
-                ctx  = browser.contexts[0] if browser.contexts else None
-                page = ctx.pages[0] if ctx and ctx.pages else None
-                if not page:
-                    await browser.close()
-                    return None
-                result = await page.evaluate(expression)
-                await browser.close()
-                return result
-        except Exception as e:
-            logger.warning(f"CDP eval exception on port {port}: {e}")
+    try:
+        with urllib.request.urlopen(f"http://localhost:{port}/json", timeout=5) as r:
+            targets = _json.loads(r.read())
+        page = next((t for t in targets if t.get("type") == "page"), None)
+        if not page:
+            logger.warning(f"CDP port {port}: no page target, targets={targets}")
+            return None
+        ws_url = page.get("webSocketDebuggerUrl")
+        if not ws_url:
+            logger.warning(f"CDP port {port}: no webSocketDebuggerUrl")
             return None
 
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(_eval())
-    finally:
-        loop.close()
+        import websockets as _ws
+
+        async def _send():
+            async with _ws.connect(ws_url, open_timeout=5, close_timeout=3) as ws:
+                await ws.send(_json.dumps({
+                    "id": 1,
+                    "method": "Runtime.evaluate",
+                    "params": {"expression": expression, "returnByValue": True},
+                }))
+                while True:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=8)
+                    resp = _json.loads(raw)
+                    if resp.get("id") == 1:
+                        result = resp.get("result", {}).get("result", {})
+                        return result.get("value")
+
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(_send())
+        finally:
+            loop.close()
+
+    except Exception as e:
+        logger.warning(f"CDP eval exception port={port} expr={expression!r}: {e}")
+        return None
 
 
 def _cdp_wait_ready(port: int, timeout: int = 60) -> bool:
