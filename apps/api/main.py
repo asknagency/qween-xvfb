@@ -299,6 +299,7 @@ def _run_xvfb_render(job_id: str, job_dir: Path, payload: dict,
             "--disable-features=IsolateOrigins,site-per-process",
             f"--remote-debugging-port={debug_port}",
             "--remote-debugging-address=127.0.0.1",
+            "--remote-allow-origins=*",      # disable CDP host-header enforcement
             f"--user-data-dir={user_data_dir}",
             f"--window-size={stage_w},{stage_h}",
             "--disable-infobars",
@@ -422,10 +423,10 @@ def _run_xvfb_render(job_id: str, job_dir: Path, payload: dict,
 # ── CDP helpers (raw WebSocket — works from any thread) ───────────────────────
 def _cdp_eval(port: int, expression: str) -> Any:
     """Evaluate JS via raw CDP WebSocket. Works from background threads."""
-    import urllib.request, json as _json, asyncio
+    import urllib.request, json as _json, asyncio, re as _re
 
     try:
-        with urllib.request.urlopen(f"http://localhost:{port}/json", timeout=5) as r:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/json", timeout=5) as r:
             targets = _json.loads(r.read())
         page = next((t for t in targets if t.get("type") == "page"), None)
         if not page:
@@ -436,6 +437,11 @@ def _cdp_eval(port: int, expression: str) -> Any:
             logger.warning(f"CDP port {port}: no webSocketDebuggerUrl")
             return None
 
+        # Chrome may return a proxied hostname in the ws URL (e.g. CodeSandbox).
+        # Rewrite to 127.0.0.1 so we always connect locally, and set Host to
+        # match — Chrome rejects any Host header that is not an IP or localhost.
+        ws_url = _re.sub(r"^ws://[^/]+", f"ws://127.0.0.1:{port}", ws_url)
+
         import websockets as _ws
 
         async def _send():
@@ -443,7 +449,7 @@ def _cdp_eval(port: int, expression: str) -> Any:
                 ws_url,
                 open_timeout=5,
                 close_timeout=3,
-                extra_headers={"Host": "localhost"},
+                extra_headers={"Host": "127.0.0.1"},
             ) as ws:
                 await ws.send(_json.dumps({
                     "id": 1,
@@ -475,7 +481,7 @@ def _cdp_wait_ready(port: int, timeout: int = 60) -> bool:
     cdp_up = False
     while time.time() < deadline:
         try:
-            with urllib.request.urlopen(f"http://localhost:{port}/json", timeout=3) as r:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/json", timeout=3) as r:
                 targets = json.loads(r.read())
             if not cdp_up:
                 logger.info(f"CDP up on port {port}, targets: {[t.get('type') for t in targets]}")
