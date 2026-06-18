@@ -1,15 +1,24 @@
 #!/bin/bash
 # ── qween-xvfb test script ────────────────────────────────────────────────────
 # Tests the full render pipeline: health → submit → poll → download
+# Uses snskl.zip (the real QweenApp project) as the test asset.
+#
 # Usage: bash test.sh [base_url] [format]
 #   base_url defaults to http://localhost:8000
-#   format defaults to mp4 (also: mov, webm)
+#   format   defaults to mp4 (also: mov, webm)
+#
+# CodeSandbox: the API port is auto-proxied, so you can pass the CSB URL:
+#   bash test.sh https://hhx62k-8000.csb.app
 
 BASE="${1:-http://localhost:8000}"
 FORMAT="${2:-mp4}"
 OUTPUT="test_render.$FORMAT"
 POLL_INTERVAL=3
-TIMEOUT=120
+TIMEOUT=180
+
+# ── The real project zip to use as the test payload ──────────────────────────
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ZIP="$SCRIPT_DIR/snskl.zip"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 ok()   { echo -e "${GREEN}✓${NC} $1"; }
@@ -23,6 +32,8 @@ echo "  qween-xvfb render test"
 echo "  $BASE  |  format: $FORMAT"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
+
+[ -f "$PROJECT_ZIP" ] || fail "Test zip not found: $PROJECT_ZIP"
 
 # ── 1. Health check ───────────────────────────────────────────────────────────
 info "Checking health..."
@@ -46,47 +57,36 @@ echo ""
 ok "Health OK"
 echo ""
 
-# ── 2. Create a minimal project.json ─────────────────────────────────────────
-info "Building test project (red box sliding across screen, 2s)..."
-PROJECT_JSON=$(cat <<'JSON'
-{
-  "nodes": [
-    {
-      "id": "node-1",
-      "type": "svg",
-      "width": 1920,
-      "height": 1080,
-      "_svgContent": "<svg id=\"main-svg-root\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1920 1080\" width=\"1920\" height=\"1080\"><rect id=\"box1\" x=\"100\" y=\"440\" width=\"200\" height=\"200\" rx=\"16\" fill=\"#e53935\"/></svg>"
-    }
-  ],
-  "tweens": [
-    {
-      "id": "t1",
-      "selectedElementIds": ["box1"],
-      "type": "to",
-      "toVars": {"x": 1700},
-      "timingVars": {"duration": 2, "ease": "power2.inOut"},
-      "position": 0
-    }
-  ]
-}
-JSON
-)
-
-TMPFILE=$(mktemp /tmp/qween_test_XXXX.json)
-echo "$PROJECT_JSON" > "$TMPFILE"
-ok "Project JSON written to $TMPFILE"
+# ── 2. Detect RENDERER_URL ────────────────────────────────────────────────────
+# In CodeSandbox every port gets a unique subdomain proxy URL.
+# Chrome's CDP is on port 9222 (first display); its CSB URL follows the same
+# pattern as the API URL — just swap the port number.
+#
+# If BASE looks like a CSB proxy (*.csb.app), derive the renderer + CDP URLs
+# from it automatically. Otherwise fall back to localhost.
+if echo "$BASE" | grep -q '\.csb\.app'; then
+  # Extract the sandbox ID prefix, e.g. "hhx62k" from https://hhx62k-8000.csb.app
+  CSB_PREFIX=$(echo "$BASE" | sed 's|https\?://\([a-z0-9]*\)-[0-9]*\.csb\.app.*|\1|')
+  RENDERER_URL="https://${CSB_PREFIX}-3001.csb.app"
+  CDP_URL="https://${CSB_PREFIX}-9222.csb.app"
+  warn "CodeSandbox detected — using proxied URLs"
+  echo "   renderer: $RENDERER_URL"
+  echo "   CDP:      $CDP_URL"
+else
+  RENDERER_URL="${RENDERER_URL:-http://localhost:3001}"
+  CDP_URL="http://localhost:9222"
+fi
 echo ""
 
 # ── 3. Submit render job ──────────────────────────────────────────────────────
-info "Submitting render job..."
+info "Submitting render job (snskl.zip — 1080×1080, 2s)..."
 RESPONSE=$(curl -sf -X POST "$BASE/jobs/render-project" \
-  -F "file=@$TMPFILE;type=application/json" \
+  -F "file=@$PROJECT_ZIP" \
   -F "fps=30" \
   -F "format=$FORMAT" \
-  -F "end_time=2" \
-  -F "stage_width=1920" \
-  -F "stage_height=1080") || fail "Failed to submit job — is the API running?"
+  -F "stage_width=1080" \
+  -F "stage_height=1080" \
+  -F "end_time=2") || fail "Failed to submit job — is the API running?"
 
 echo "$RESPONSE" | python3 -m json.tool
 echo ""
@@ -103,8 +103,9 @@ while true; do
   POLL=$(curl -sf "$BASE/jobs/$JOB_ID/status") || fail "Status endpoint failed"
   JOB_STATUS=$(echo "$POLL" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','?'))")
   MSG=$(echo "$POLL"        | python3 -c "import sys,json; print(json.load(sys.stdin).get('message',''))" 2>/dev/null)
+  PROGRESS=$(echo "$POLL"   | python3 -c "import sys,json; print(json.load(sys.stdin).get('progress',0))" 2>/dev/null)
 
-  printf "\r   [%3ds] status: %-12s %s" "$ELAPSED" "$JOB_STATUS" "$MSG"
+  printf "\r   [%3ds] %3s%%  %-14s %s" "$ELAPSED" "$PROGRESS" "$JOB_STATUS" "$MSG"
 
   if [ "$JOB_STATUS" = "done" ]; then
     echo ""
@@ -142,5 +143,3 @@ echo -e "  ${GREEN}All tests passed!${NC}"
 echo "  Output: $(pwd)/$OUTPUT"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-
-rm -f "$TMPFILE"

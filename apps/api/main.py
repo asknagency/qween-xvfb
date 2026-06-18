@@ -84,6 +84,20 @@ PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
 # Static file server for QweenRender.html + project ZIPs
 RENDERER_URL = os.environ.get("RENDERER_URL", "http://localhost:3001")
 
+# ── CodeSandbox CDP URL derivation ────────────────────────────────────────────
+# In CSB every port is proxied through <sandbox_id>-<port>.csb.app.
+# Chrome's CDP port (9222 + display offset) cannot use localhost — we must use
+# the proxy URL. Derive CDP_BASE_URL from RENDERER_URL when running in CSB,
+# otherwise fall back to 127.0.0.1 (works for local + regular VMs).
+def _cdp_base_url(port: int) -> str:
+    """Return the base URL (no trailing slash) to reach the CDP HTTP JSON API."""
+    csb_renderer = os.environ.get("RENDERER_URL", "")
+    import re as _re
+    m = _re.match(r"https?://([a-z0-9]+)-\d+\.csb\.app", csb_renderer)
+    if m:
+        return f"https://{m.group(1)}-{port}.csb.app"
+    return f"http://127.0.0.1:{port}"
+
 MAX_ZIP_MB        = 500
 MAX_VIDEO_MB      = 2048
 AUTO_CLEAN_HOURS  = 6
@@ -426,7 +440,7 @@ def _cdp_eval(port: int, expression: str) -> Any:
     import urllib.request, json as _json, asyncio, re as _re
 
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/json", timeout=5) as r:
+        with urllib.request.urlopen(f"{_cdp_base_url(port)}/json", timeout=5) as r:
             targets = _json.loads(r.read())
         page = next((t for t in targets if t.get("type") == "page"), None)
         if not page:
@@ -440,7 +454,11 @@ def _cdp_eval(port: int, expression: str) -> Any:
         # Chrome may return a proxied hostname in the ws URL (e.g. CodeSandbox).
         # Rewrite to 127.0.0.1 so we always connect locally, and set Host to
         # match — Chrome rejects any Host header that is not an IP or localhost.
-        ws_url = _re.sub(r"^ws://[^/]+", f"ws://127.0.0.1:{port}", ws_url)
+        # Rewrite ws URL: swap host to 127.0.0.1 for local, or to the CSB
+        # ws proxy URL (wss://sandbox-port.csb.app) for proxied environments.
+        _base = _cdp_base_url(port)
+        _ws_prefix = _base.replace("https://", "wss://").replace("http://", "ws://")
+        ws_url = _re.sub(r"^wss?://[^/]+", _ws_prefix, ws_url)
 
         import websockets as _ws
 
@@ -449,7 +467,7 @@ def _cdp_eval(port: int, expression: str) -> Any:
                 ws_url,
                 open_timeout=5,
                 close_timeout=3,
-                extra_headers={"Host": "127.0.0.1"},
+                extra_headers={"Host": _re.sub(r"https?://", "", _base).split(":")[0]},
             ) as ws:
                 await ws.send(_json.dumps({
                     "id": 1,
@@ -481,7 +499,7 @@ def _cdp_wait_ready(port: int, timeout: int = 60) -> bool:
     cdp_up = False
     while time.time() < deadline:
         try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/json", timeout=3) as r:
+            with urllib.request.urlopen(f"{_cdp_base_url(port)}/json", timeout=3) as r:
                 targets = json.loads(r.read())
             if not cdp_up:
                 logger.info(f"CDP up on port {port}, targets: {[t.get('type') for t in targets]}")

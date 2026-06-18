@@ -22,6 +22,9 @@ apps/app/public/projects/*.zip
 /tmp/
 *.log
 
+# Test asset — keep tracked
+!snskl.zip
+
 # OS
 .DS_Store
 Thumbbs.db
