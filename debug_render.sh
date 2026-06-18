@@ -4,6 +4,9 @@
 # where it breaks. Run this in the CodeSandbox terminal.
 # Usage: bash debug_render.sh
 
+LOG=/tmp/qween_debug.log
+exec > >(tee "$LOG") 2>&1
+echo "Full log: $LOG"
 set -e
 DISP=99
 PORT=9222
