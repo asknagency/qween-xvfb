@@ -45,9 +45,22 @@ mkdir -p "$PROJECT_DIR"
 TEST_ID="debug-test-$(date +%s)"
 python3 - <<PYEOF
 import zipfile, json, sys
+svg = (
+  '<svg id="main-svg-root" xmlns="http://www.w3.org/2000/svg" ' 
+  'viewBox="0 0 1920 1080" width="1920" height="1080">' 
+  '<rect id="box1" x="100" y="440" width="200" height="200" rx="16" fill="#e53935"/>' 
+  '</svg>'
+)
 proj = {
-  "nodes": [{"id":"box1","type":"shape","x":100,"y":400,"width":200,"height":200,"fill":"#e53935"}],
-  "tweens": [{"id":"t1","nodeId":"box1","prop":"x","from":100,"to":1700,"start":0,"duration":2,"ease":"power2.inOut"}]
+  "nodes": [{"id": "node-1", "type": "svg", "width": 1920, "height": 1080, "_svgContent": svg}],
+  "tweens": [{
+    "id": "t1",
+    "selectedElementIds": ["box1"],
+    "type": "to",
+    "toVars": {"x": 1700},
+    "timingVars": {"duration": 2, "ease": "power2.inOut"},
+    "position": 0
+  }]
 }
 path = "$PROJECT_DIR/$TEST_ID.zip"
 with zipfile.ZipFile(path, "w") as zf:

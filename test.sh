@@ -52,34 +52,21 @@ PROJECT_JSON=$(cat <<'JSON'
 {
   "nodes": [
     {
-      "id": "box1",
-      "type": "shape",
-      "x": 100, "y": 400,
-      "width": 200, "height": 200,
-      "fill": "#e53935",
-      "rx": 16
+      "id": "node-1",
+      "type": "svg",
+      "width": 1920,
+      "height": 1080,
+      "_svgContent": "<svg id=\"main-svg-root\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1920 1080\" width=\"1920\" height=\"1080\"><rect id=\"box1\" x=\"100\" y=\"440\" width=\"200\" height=\"200\" rx=\"16\" fill=\"#e53935\"/></svg>"
     }
   ],
   "tweens": [
     {
       "id": "t1",
-      "nodeId": "box1",
-      "prop": "x",
-      "from": 100,
-      "to": 1700,
-      "start": 0,
-      "duration": 2,
-      "ease": "power2.inOut"
-    },
-    {
-      "id": "t2",
-      "nodeId": "box1",
-      "prop": "opacity",
-      "from": 0,
-      "to": 1,
-      "start": 0,
-      "duration": 0.4,
-      "ease": "none"
+      "selectedElementIds": ["box1"],
+      "type": "to",
+      "toVars": {"x": 1700},
+      "timingVars": {"duration": 2, "ease": "power2.inOut"},
+      "position": 0
     }
   ]
 }
