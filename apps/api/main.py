@@ -81,21 +81,32 @@ ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 PROJECTS_DIR = Path(__file__).parent.parent / "app" / "public" / "projects"
 PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Static file server for QweenRender.html + project ZIPs
-RENDERER_URL = os.environ.get("RENDERER_URL", "http://localhost:3001")
+# ── Public URL config ────────────────────────────────────────────────────────
+# In proxied environments (CodeSandbox, Gitpod, Codespaces) each port gets its
+# own public URL. Set these three in .env to override the localhost defaults:
+#
+#   RENDERER_URL=https://hhx62k-3001.csb.app   # Node static server (port 3001)
+#   CDP_URL=https://hhx62k-9222.csb.app         # Chrome DevTools Protocol port
+#   API_PUBLIC_URL=https://hhx62k-8000.csb.app  # This FastAPI server (port 8000)
+#
+# Locally these all default to 127.0.0.1 and just work.
+RENDERER_URL    = os.environ.get("RENDERER_URL",    "http://localhost:3001")
+CDP_URL         = os.environ.get("CDP_URL",         "http://localhost:9222")
+API_PUBLIC_URL  = os.environ.get("API_PUBLIC_URL",  "http://localhost:8000")
 
-# ── CodeSandbox CDP URL derivation ────────────────────────────────────────────
-# In CSB every port is proxied through <sandbox_id>-<port>.csb.app.
-# Chrome's CDP port (9222 + display offset) cannot use localhost — we must use
-# the proxy URL. Derive CDP_BASE_URL from RENDERER_URL when running in CSB,
-# otherwise fall back to 127.0.0.1 (works for local + regular VMs).
+
 def _cdp_base_url(port: int) -> str:
-    """Return the base URL (no trailing slash) to reach the CDP HTTP JSON API."""
-    csb_renderer = os.environ.get("RENDERER_URL", "")
-    import re as _re
-    m = _re.match(r"https?://([a-z0-9]+)-\d+\.csb\.app", csb_renderer)
-    if m:
-        return f"https://{m.group(1)}-{port}.csb.app"
+    """Return the base URL to reach Chrome's CDP JSON API.
+
+    Uses CDP_URL from the environment when set (required in proxied envs like
+    CodeSandbox). Falls back to 127.0.0.1:<port> for local/VM runs.
+    The port argument is kept for the fallback path and display-pool offset
+    awareness — CDP_URL already encodes the right port when set explicitly.
+    """
+    explicit = os.environ.get("CDP_URL", "").rstrip("/")
+    if explicit:
+        # CDP_URL is set — use it directly (port is already in the URL)
+        return explicit
     return f"http://127.0.0.1:{port}"
 
 MAX_ZIP_MB        = 500

@@ -10,7 +10,14 @@
 # CodeSandbox: the API port is auto-proxied, so you can pass the CSB URL:
 #   bash test.sh https://hhx62k-8000.csb.app
 
-BASE="${1:-http://localhost:8000}"
+# Load .env from repo root if present — picks up API_PUBLIC_URL, RENDERER_URL, CDP_URL
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$SCRIPT_DIR/.env" ]; then
+  set -a; source "$SCRIPT_DIR/.env"; set +a
+fi
+
+# Base URL: CLI arg > API_PUBLIC_URL from .env > localhost fallback
+BASE="${1:-${API_PUBLIC_URL:-http://localhost:8000}}"
 FORMAT="${2:-mp4}"
 OUTPUT="test_render.$FORMAT"
 POLL_INTERVAL=3
@@ -57,28 +64,7 @@ echo ""
 ok "Health OK"
 echo ""
 
-# ── 2. Detect RENDERER_URL ────────────────────────────────────────────────────
-# In CodeSandbox every port gets a unique subdomain proxy URL.
-# Chrome's CDP is on port 9222 (first display); its CSB URL follows the same
-# pattern as the API URL — just swap the port number.
-#
-# If BASE looks like a CSB proxy (*.csb.app), derive the renderer + CDP URLs
-# from it automatically. Otherwise fall back to localhost.
-if echo "$BASE" | grep -q '\.csb\.app'; then
-  # Extract the sandbox ID prefix, e.g. "hhx62k" from https://hhx62k-8000.csb.app
-  CSB_PREFIX=$(echo "$BASE" | sed 's|https\?://\([a-z0-9]*\)-[0-9]*\.csb\.app.*|\1|')
-  RENDERER_URL="https://${CSB_PREFIX}-3001.csb.app"
-  CDP_URL="https://${CSB_PREFIX}-9222.csb.app"
-  warn "CodeSandbox detected — using proxied URLs"
-  echo "   renderer: $RENDERER_URL"
-  echo "   CDP:      $CDP_URL"
-else
-  RENDERER_URL="${RENDERER_URL:-http://localhost:3001}"
-  CDP_URL="http://localhost:9222"
-fi
-echo ""
-
-# ── 3. Submit render job ──────────────────────────────────────────────────────
+# ── 2. Submit render job ──────────────────────────────────────────────────────
 info "Submitting render job (snskl.zip — 1080×1080, 2s)..."
 RESPONSE=$(curl -sf -X POST "$BASE/jobs/render-project" \
   -F "file=@$PROJECT_ZIP" \
@@ -96,7 +82,7 @@ JOB_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.std
 ok "Job queued: $JOB_ID"
 echo ""
 
-# ── 4. Poll until done ────────────────────────────────────────────────────────
+# ── 3. Poll until done ────────────────────────────────────────────────────────
 info "Polling status (timeout: ${TIMEOUT}s)..."
 ELAPSED=0
 while true; do
@@ -130,7 +116,7 @@ while true; do
 done
 echo ""
 
-# ── 5. Download output ────────────────────────────────────────────────────────
+# ── 4. Download output ────────────────────────────────────────────────────────
 info "Downloading $OUTPUT..."
 curl -sf -o "$OUTPUT" "$BASE/jobs/$JOB_ID/download" || fail "Download failed"
 SIZE=$(du -h "$OUTPUT" | cut -f1)
