@@ -23,6 +23,7 @@ Why this works:
 import asyncio
 import hashlib
 import json
+import logging
 import math
 import os
 import re
@@ -41,6 +42,10 @@ from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadF
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger("qween")
 
 # ── App setup ─────────────────────────────────────────────────────────────────
 app = FastAPI(title="QweenXvfb Render Server", version="1.0.0")
@@ -257,6 +262,8 @@ def _run_xvfb_render(job_id: str, job_dir: Path, payload: dict,
 
         # ── 3. Launch Chromium non-headless ──────────────────────────────────
         debug_port = 9222 + (disp - _DISPLAY_START)  # unique port per display
+        logger.info(f"Render URL: {render_url}")
+        logger.info(f"CDP debug port: {debug_port}")
         chromium_cmd = [
             "chrome",  # overridden below from CHROMIUM_BIN env
             "--no-sandbox",
@@ -274,7 +281,7 @@ def _run_xvfb_render(job_id: str, job_dir: Path, payload: dict,
         if not chromium_bin:
             raise RuntimeError("No Chromium binary found. Set CHROMIUM_BIN in .env")
         chromium_cmd[0] = chromium_bin
-
+        logger.info(f"Launching Chrome: {' '.join(chromium_cmd)}")
         env = {**os.environ, "DISPLAY": f":{disp}"}
         chromium_proc = subprocess.Popen(
             chromium_cmd, env=env,
@@ -397,7 +404,8 @@ def _cdp_eval(port: int, expression: str) -> Any:
                 result = await page.evaluate(expression)
                 await browser.close()
                 return result
-        except Exception:
+        except Exception as e:
+            logger.warning(f"CDP eval exception on port {port}: {e}")
             return None
 
     loop = asyncio.new_event_loop()
@@ -411,17 +419,22 @@ def _cdp_wait_ready(port: int, timeout: int = 60) -> bool:
     """Poll __qween_ready via CDP WebSocket until true or timeout."""
     import urllib.request
     deadline = time.time() + timeout
+    cdp_up = False
     while time.time() < deadline:
         try:
-            # Wait for CDP HTTP to come up first
             with urllib.request.urlopen(f"http://localhost:{port}/json", timeout=3) as r:
                 targets = json.loads(r.read())
+            if not cdp_up:
+                logger.info(f"CDP up on port {port}, targets: {[t.get('type') for t in targets]}")
+                cdp_up = True
             if targets:
                 val = _cdp_eval(port, "!!window.__qween_ready")
+                logger.info(f"CDP __qween_ready = {val!r}")
                 if val is True:
                     return True
-        except Exception:
-            pass
+        except Exception as e:
+            if not cdp_up:
+                logger.debug(f"CDP not yet up on port {port}: {e}")
         time.sleep(1.0)
     return False
 
