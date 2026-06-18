@@ -262,6 +262,8 @@ def _run_xvfb_render(job_id: str, job_dir: Path, payload: dict,
 
         # ── 3. Launch Chromium non-headless ──────────────────────────────────
         debug_port = 9222 + (disp - _DISPLAY_START)  # unique port per display
+        user_data_dir = job_dir / "chrome-profile"
+        user_data_dir.mkdir(exist_ok=True)
         logger.info(f"Render URL: {render_url}")
         logger.info(f"CDP debug port: {debug_port}")
         chromium_cmd = [
@@ -270,12 +272,17 @@ def _run_xvfb_render(job_id: str, job_dir: Path, payload: dict,
             "--disable-setuid-sandbox",
             "--autoplay-policy=no-user-gesture-required",
             "--disable-web-security",
+            "--disable-features=IsolateOrigins,site-per-process",
             f"--remote-debugging-port={debug_port}",
+            "--remote-debugging-address=127.0.0.1",
+            f"--user-data-dir={user_data_dir}",
             f"--window-size={stage_w},{stage_h}",
             "--disable-infobars",
             "--disable-extensions",
             "--hide-scrollbars",
-            f"--app={render_url}",
+            "--disable-gpu",
+            "--disable-dev-shm-usage",
+            render_url,
         ]
         chromium_bin = os.environ.get("CHROMIUM_BIN") or shutil.which("google-chrome-stable") or shutil.which("google-chrome") or shutil.which("chromium-browser") or shutil.which("chromium")
         if not chromium_bin:

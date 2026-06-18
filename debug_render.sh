@@ -80,12 +80,17 @@ DISPLAY=:$DISP "$CHROME" \
   --disable-setuid-sandbox \
   --autoplay-policy=no-user-gesture-required \
   --disable-web-security \
+  --disable-features=IsolateOrigins,site-per-process \
   --remote-debugging-port=$PORT \
+  --remote-debugging-address=127.0.0.1 \
+  --user-data-dir=/tmp/chrome-debug-profile \
   --window-size=${STAGE_W},${STAGE_H} \
   --disable-infobars \
   --disable-extensions \
   --hide-scrollbars \
-  --app="$RENDER_URL" \
+  --disable-gpu \
+  --disable-dev-shm-usage \
+  "$RENDER_URL" \
   > /tmp/chrome_debug.log 2>&1 &
 CHROME_PID=$!
 sleep 3
