@@ -47,6 +47,29 @@ from pydantic import BaseModel
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("qween")
 
+# ── Auto-detect Playwright Chromium if CHROMIUM_BIN not set ──────────────────
+# Playwright installs Chromium to a known path; use it as a fallback so the
+# server works out-of-the-box without a manual .env entry.
+if not os.environ.get("CHROMIUM_BIN"):
+    _pw_candidates = [
+        "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
+        "/opt/pw-browsers/chromium-1161/chrome-linux/chrome",
+        "/opt/pw-browsers/chromium-1124/chrome-linux/chrome",
+    ]
+    # Also search dynamically under /opt/pw-browsers/
+    try:
+        import glob as _glob
+        _pw_candidates += sorted(
+            _glob.glob("/opt/pw-browsers/chromium-*/chrome-linux/chrome"), reverse=True
+        )
+    except Exception:
+        pass
+    for _c in _pw_candidates:
+        if os.path.isfile(_c):
+            os.environ["CHROMIUM_BIN"] = _c
+            logging.getLogger("qween").info(f"Auto-detected Playwright Chromium: {_c}")
+            break
+
 # ── App setup ─────────────────────────────────────────────────────────────────
 app = FastAPI(title="QweenXvfb Render Server", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -255,7 +278,8 @@ def _run_xvfb_render(job_id: str, job_dir: Path, payload: dict,
             "+extension", "GLX",
             "+render",
         ]
-        xvfb_proc = subprocess.Popen(xvfb_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        xvfb_proc = subprocess.Popen(xvfb_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                     start_new_session=True)
         time.sleep(1.0)  # give Xvfb time to initialise
 
         _job_update(job_id, message="Launching browser…", progress=5)
@@ -293,6 +317,7 @@ def _run_xvfb_render(job_id: str, job_dir: Path, payload: dict,
         chromium_proc = subprocess.Popen(
             chromium_cmd, env=env,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
         )
         time.sleep(2.0)  # give Chromium time to open the page
 
@@ -318,7 +343,8 @@ def _run_xvfb_render(job_id: str, job_dir: Path, payload: dict,
             "-pix_fmt", "yuv444p",
             str(raw_capture),
         ]
-        ffmpeg_proc = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        ffmpeg_proc = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                       start_new_session=True)
         time.sleep(0.5)  # let FFmpeg start capturing before triggering playback
 
         # ── 6. Trigger playback via CDP ───────────────────────────────────────
@@ -417,7 +443,7 @@ def _cdp_eval(port: int, expression: str) -> Any:
                 ws_url,
                 open_timeout=5,
                 close_timeout=3,
-                additional_headers={"Host": "localhost"},
+                extra_headers={"Host": "localhost"},
             ) as ws:
                 await ws.send(_json.dumps({
                     "id": 1,
