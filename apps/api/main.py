@@ -413,7 +413,12 @@ def _cdp_eval(port: int, expression: str) -> Any:
         import websockets as _ws
 
         async def _send():
-            async with _ws.connect(ws_url, open_timeout=5, close_timeout=3) as ws:
+            async with _ws.connect(
+                ws_url,
+                open_timeout=5,
+                close_timeout=3,
+                additional_headers={"Host": "localhost"},
+            ) as ws:
                 await ws.send(_json.dumps({
                     "id": 1,
                     "method": "Runtime.evaluate",

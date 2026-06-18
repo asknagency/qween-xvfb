@@ -4,7 +4,7 @@
 # where it breaks. Run this in the CodeSandbox terminal.
 # Usage: bash debug_render.sh
 
-LOG=/tmp/qween_debug.log
+LOG="$(dirname "$0")/debug_output.log"
 exec > >(tee "$LOG") 2>&1
 echo "Full log: $LOG"
 set -e
@@ -140,7 +140,7 @@ async def check():
                 continue
             ws_url = page.get("webSocketDebuggerUrl")
             print(f"  page URL: {page.get('url','?')[:80]}")
-            async with websockets.connect(ws_url, open_timeout=5) as ws:
+            async with websockets.connect(ws_url, open_timeout=5, additional_headers={"Host": "localhost"}) as ws:
                 await ws.send(json.dumps({"id":1,"method":"Runtime.evaluate","params":{"expression":"JSON.stringify({ready: !!window.__qween_ready, error: window.__qween_error, url: location.href})","returnByValue":True}}))
                 while True:
                     raw = await asyncio.wait_for(ws.recv(), timeout=8)
