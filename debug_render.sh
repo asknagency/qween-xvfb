@@ -115,49 +115,77 @@ done
 [ -z "$RESULT" ] && fail "CDP never came up on port $PORT"
 echo ""
 
-# ── Step 8: Check __qween_ready via CDP WebSocket ────────────────────────────
-info "Step 8: Poll __qween_ready for up to 30s"
+# ── Step 8: Capture console errors + check __qween_ready ─────────────────────
+info "Step 8: Capture JS console errors and check __qween_ready (one shot)"
 python3 - <<PYEOF
-import asyncio, json, urllib.request, time, sys
+import asyncio, json, urllib.request, sys
 try:
     import websockets
 except ImportError:
-    print("websockets not installed — run: pip install websockets")
+    print("websockets not installed")
     sys.exit(1)
 
 PORT = $PORT
-deadline = time.time() + 30
 
 async def check():
-    while time.time() < deadline:
-        try:
-            with urllib.request.urlopen(f"http://localhost:{PORT}/json", timeout=3) as r:
-                targets = json.loads(r.read())
-            page = next((t for t in targets if t.get("type") == "page"), None)
-            if not page:
-                print(f"  no page target yet, targets={[t.get('type') for t in targets]}")
-                await asyncio.sleep(1)
-                continue
-            ws_url = page.get("webSocketDebuggerUrl")
-            print(f"  page URL: {page.get('url','?')[:80]}")
-            async with websockets.connect(ws_url, open_timeout=5, additional_headers={"Host": "localhost"}) as ws:
-                await ws.send(json.dumps({"id":1,"method":"Runtime.evaluate","params":{"expression":"JSON.stringify({ready: !!window.__qween_ready, error: window.__qween_error, url: location.href})","returnByValue":True}}))
-                while True:
-                    raw = await asyncio.wait_for(ws.recv(), timeout=8)
-                    resp = json.loads(raw)
-                    if resp.get("id") == 1:
-                        val = resp.get("result",{}).get("result",{}).get("value")
-                        print(f"  JS state: {val}")
-                        parsed = json.loads(val) if val else {}
-                        if parsed.get("ready"):
-                            print("✓ __qween_ready is TRUE")
-                            return True
-                        break
-        except Exception as e:
-            print(f"  exception: {e}")
-        await asyncio.sleep(2)
-    print("✗ Timed out — __qween_ready never became true")
-    return False
+    with urllib.request.urlopen(f"http://localhost:{PORT}/json", timeout=5) as r:
+        targets = json.loads(r.read())
+    page = next((t for t in targets if t.get("type") == "page"), None)
+    if not page:
+        print(f"No page target: {targets}")
+        return
+    ws_url = page.get("webSocketDebuggerUrl")
+    print(f"Connecting to: {ws_url}")
+
+    async with websockets.connect(ws_url, open_timeout=10, additional_headers={"Host": "localhost"}) as ws:
+        # Enable console log capture and runtime exceptions
+        for method in ["Runtime.enable", "Log.enable", "Console.enable"]:
+            await ws.send(json.dumps({"id": 0, "method": method, "params": {}}))
+
+        # Wait 8 seconds collecting all events, then check state
+        console_msgs = []
+        exceptions = []
+        deadline = asyncio.get_event_loop().time() + 8
+        while asyncio.get_event_loop().time() < deadline:
+            try:
+                raw = await asyncio.wait_for(ws.recv(), timeout=1)
+                msg = json.loads(raw)
+                method = msg.get("method", "")
+                if method == "Runtime.consoleAPICalled":
+                    args = msg.get("params", {}).get("args", [])
+                    text = " ".join(str(a.get("value", a.get("description", ""))) for a in args)
+                    t = msg["params"].get("type", "log")
+                    console_msgs.append(f"[{t}] {text}")
+                elif method == "Runtime.exceptionThrown":
+                    exc = msg["params"]["exceptionDetails"]
+                    exceptions.append(f"EXCEPTION: {exc.get('text','')} {exc.get('exception',{}).get('description','')}")
+                elif method == "Log.entryAdded":
+                    entry = msg["params"]["entry"]
+                    console_msgs.append(f"[{entry.get('level','?')}] {entry.get('text','')}")
+            except asyncio.TimeoutError:
+                pass
+
+        # Now check the actual JS state
+        await ws.send(json.dumps({"id": 99, "method": "Runtime.evaluate", "params": {
+            "expression": "JSON.stringify({ready: !!window.__qween_ready, error: window.__qween_error || null})",
+            "returnByValue": True
+        }}))
+        while True:
+            raw = await asyncio.wait_for(ws.recv(), timeout=5)
+            resp = json.loads(raw)
+            if resp.get("id") == 99:
+                val = resp.get("result", {}).get("result", {}).get("value", "{}")
+                print(f"\n=== JS State ===")
+                print(val)
+                break
+
+        print(f"\n=== Console ({len(console_msgs)} messages) ===")
+        for m in console_msgs[-30:]:
+            print(m)
+
+        print(f"\n=== Exceptions ({len(exceptions)}) ===")
+        for e in exceptions:
+            print(e)
 
 asyncio.run(check())
 PYEOF
